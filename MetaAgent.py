@@ -1,0 +1,206 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import gym
+
+from keras.layers import Input, Dense, concatenate
+from keras.models import Model
+from keras.optimizers import Adam
+from keras import backend as K
+
+class MetaAgent:
+    def __init__(self, env,
+                epsilon=0.2, gamma=0.99, entropy_loss=1e-3, actor_lr=0.001, critic_lr=0.005,
+                hidden_size=128, epochs=10, batch_size=64, buffer_size=256, seed=None):
+        self.env = env
+
+        self.envs = env.envs
+        self.env_count = env.env_count
+
+        self.agents = env.agents
+        self.agent_count = env.agent_count
+
+        self.allocation_space = env.allocation_space
+        self.observation_spaces = env.observation_spaces
+
+        # Set hyperparameters
+        self.epsilon = epsilon
+        self.gamma = gamma
+        self.entropy_loss = entropy_loss
+        self.coef = 0.01
+        self.actor_lr = actor_lr
+        self.critic_lr = critic_lr
+        self.hidden_size = hidden_size
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.buffer_size = buffer_size
+
+        # Build Actor and Critic models
+        self.actor = self.build_actor()
+
+        self.DUMMY_ALLOCATION = np.zeros(self.allocation_space.shape)
+        self.DUMMY_VALUE = np.zeros((1, self.agent_count))
+
+    def proximal_policy_optimization_loss(self, advantage, debug=True):
+        def loss(y_true, y_pred):
+            y_pred = K.print_tensor(y_pred, 'pred ')
+            adv = K.print_tensor(advantage, 'adva ')
+            return -self.coef*adv*y_pred + self.entropy_loss*y_pred*K.log(y_pred+1e-10)
+        return loss
+
+    def build_actor(self):
+        observation_inputs = []
+        for i, sub_obs in enumerate(self.observation_spaces):
+            sub_input = Input(shape=sub_obs.shape, name='sub_obs_{}'.format(i))
+            observation_inputs.append(sub_input)
+        advantage = Input(shape=(self.agent_count,), name='advantage')
+        previous_allocation = Input(shape=self.allocation_space.shape, name='previous_allocation')
+
+        x = concatenate(observation_inputs + [previous_allocation])
+        x = Dense(self.hidden_size, activation='relu')(x)
+        x = Dense(self.hidden_size, activation='relu')(x)
+
+        out_allocation = Dense(self.allocation_space.shape[0], activation='softmax')(x)
+
+        model = Model(inputs=observation_inputs + [advantage, previous_allocation],
+                      outputs=[out_allocation])
+
+        model.compile(optimizer=Adam(lr=self.actor_lr),
+                      loss=[self.proximal_policy_optimization_loss(
+                          advantage=advantage
+                      )])
+        return model
+
+    def get_allocation(self, observations, prev_alloc):
+        p_al = np.array([prev_alloc])
+        obs = [o.reshape((1,) + o.shape) for o in observations]
+        alloc = self.actor.predict(obs + [self.DUMMY_VALUE, p_al])
+        return alloc
+
+    def train_batch(self, observations, allocations, rewards, previous_allocations):
+        # limit our data to the buffer_size
+        obs = observations[:self.buffer_size]
+        allocs = allocations[:self.buffer_size]
+        rews = rewards[:self.buffer_size]
+        prev_allocs = previous_allocations[:self.buffer_size]
+        obs = np.split(obs, obs.shape[1], axis=1)
+        obs = [o.reshape(o.shape[0], o.shape[2]) for o in obs]
+        self.actor.fit(obs + [rews, prev_allocs], [allocs],
+                       batch_size=self.batch_size, shuffle=True,
+                       epochs=self.epochs, verbose=False)
+
+    def run(self, episodes, verbose=False, test_run=False):
+        episode = 0
+        reward_history = []
+        end_test=False
+
+        # reset the environment
+        observations = self.env.reset()
+
+        # Collect a batch of samples
+        while episode < episodes:
+            # 'Master Batch' that we add mini batches to
+            batch = {
+                'observation': [],
+                'allocation_vector': [],
+                'previous_allocation_vector': [],
+                'reward': []
+            }
+
+            # Mini batch which contains a single episode's data
+            tmp_batch = {
+                'observation': [],
+                'allocation_vector': [],
+                'previous_allocation_vector': [],
+                'reward': []
+            }
+
+            previous_alloc_vector = self.env.allocation
+            tmp_batch['previous_allocation_vector'].append(previous_alloc_vector)
+
+            # While we don't hit the buffer size with our master batch...
+            while len(batch['observation']) < self.buffer_size and not end_test:
+                # Get the action (scalar), action vector (one-hot vector),
+                # and probability distribution (vector) from the current observation
+                alloc_vector = self.get_allocation(observations, previous_alloc_vector)[0]
+
+                # Get the next observation, reward, done, and info for taking an action
+                next_observations, rewards, done, info = self.env.step(alloc_vector)
+
+                # Append the data to the mini batch
+                tmp_batch['observation'].append(observations)
+                tmp_batch['allocation_vector'].append(alloc_vector)
+                tmp_batch['previous_allocation_vector'].append(previous_alloc_vector)
+                tmp_batch['reward'].append(rewards)
+
+                # The current observation is now the 'next' observation
+                observations = next_observations
+                previous_alloc_vector = alloc_vector
+
+                if test_run:
+                    self.env.render()
+
+                # if the episode is at a terminal state...
+                if done:
+                    # log some reward data (for plotting)
+                    reward_data = np.sum(tmp_batch['reward'])
+                    reward_history.append(reward_data)
+
+                    # transform rewards based to discounted cumulative rewards
+                    # for j in range(len(tmp_batch['reward']) - 2, -1, -1):
+                    #     tmp_batch['reward'][j] += tmp_batch['reward'][j + 1] * self.gamma
+
+                    # for each entry in the mini batch...
+                    for i in range(len(tmp_batch['observation'])):
+                        # we unpack the data
+                        obs = tmp_batch['observation'][i]
+                        alloc = tmp_batch['allocation_vector'][i]
+                        previous_alloc = tmp_batch['previous_allocation_vector'][i]
+                        r = tmp_batch['reward'][i]
+
+                        # and pack it into the master batch
+                        batch['observation'].append(obs)
+                        batch['allocation_vector'].append(alloc)
+                        batch['previous_allocation_vector'].append(previous_alloc)
+                        batch['reward'].append(r)
+
+                    # every 10th episode, log some stuff
+                    if (episode + 1) % 25 == 0:
+                        print('Episode:', episode)
+                        print('Reward :', reward_data)
+                        print('Average:', np.mean(reward_history[-25:]))
+                        print('-'*10)
+                        print()
+                        self.env.render()
+
+                    # reset the environment
+                    observations = self.env.reset()
+
+                    # reset the mini batch
+                    tmp_batch = {
+                        'observation': [],
+                        'allocation_vector': [],
+                        'previous_allocation_vector': [],
+                        'reward': []
+                    }
+
+                    # increment the episode count
+                    episode += 1
+
+                    if test_run:
+                        end_test = True
+
+            if test_run:
+                break
+
+            # we've filled up our master batch, so we unpack it into numpy arrays
+            _observations = np.array(batch['observation'])
+            _allocs = np.array(batch['allocation_vector'])
+            _prev_allocs = np.array(batch['previous_allocation_vector'])
+            _rewards = np.array(batch['reward'])
+            #rewards = np.reshape(rewards, (len(batch['reward']), 1))
+
+            # train the agent on the batched data
+            self.train_batch(_observations, _allocs, _rewards, _prev_allocs)
+
+        self.reward_history = reward_history
+        return self.reward_history
