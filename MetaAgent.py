@@ -9,7 +9,7 @@ from keras import backend as K
 
 class MetaAgent:
     def __init__(self, env,
-                epsilon=0.2, gamma=0.99, entropy_loss=5e-3, actor_lr=0.001, critic_lr=0.005,
+                epsilon=0.2, gamma=0.99, entropy_loss=1e-3, actor_lr=0.001, critic_lr=0.005,
                 hidden_size=128, epochs=10, batch_size=64, buffer_size=256, seed=None):
         self.env = env
 
@@ -26,7 +26,6 @@ class MetaAgent:
         self.epsilon = epsilon
         self.gamma = gamma
         self.entropy_loss = entropy_loss
-        self.coef = 0.01
         self.actor_lr = actor_lr
         self.critic_lr = critic_lr
         self.hidden_size = hidden_size
@@ -43,10 +42,43 @@ class MetaAgent:
 
     def proximal_policy_optimization_loss(self, advantage, previous_allocation, debug=True):
         def loss(y_true, y_pred):
-            y_pred = K.print_tensor(y_pred, 'pred ')
-            adv = K.print_tensor(advantage, 'adva ')
+            adv = advantage
+            if debug:
+                adv = K.print_tensor(adv, '\n******\nadvantage     :')
 
-            return -self.coef*adv*y_pred + self.entropy_loss*y_pred*K.log(y_pred+1e-10)
+            if debug:
+                y_true = K.print_tensor(y_true, 'y_true        :')
+                y_pred = K.print_tensor(y_pred, 'y_pred        :')
+
+            alloc = y_true * y_pred
+            if debug:
+                alloc = K.print_tensor(alloc, 'alloc          :')
+
+            prev_alloc = y_true * previous_allocation
+            if debug:
+                prev_alloc = K.print_tensor(prev_alloc, 'prev_alloc      :')
+
+            r = alloc/(prev_alloc + 1e-10)
+            if debug:
+                r = K.print_tensor(r, 'r             :')
+
+            clipped = K.clip(r, min_value=1-self.epsilon, max_value=1+self.epsilon)
+            if debug:
+                clipped = K.print_tensor(clipped, 'clipped       :')
+
+            minimum = K.minimum(r * adv, clipped * adv)
+            if debug:
+                minimum = K.print_tensor(minimum, 'minimum       :')
+
+            entropy_bonus = self.entropy_loss * (alloc * K.log(alloc + 1e-10))
+            if debug:
+                entropy_bonus = K.print_tensor(entropy_bonus, 'entropy_bonus :')
+
+            result = -K.mean(minimum + entropy_bonus)
+            if debug:
+                result = K.print_tensor(result, 'result        :')
+
+            return result
         return loss
 
     def build_actor(self):
@@ -83,7 +115,7 @@ class MetaAgent:
 
 	# hidden layers
         x = concatenate(observation_inputs + [previous_allocation])
-        x = Dense(self.hidden_size, activation='relu')(state_inputs)
+        x = Dense(self.hidden_size, activation='relu')(x)
         x = Dense(self.hidden_size, activation='relu')(x)
 
         # we predict the value of the current observation
@@ -115,7 +147,7 @@ class MetaAgent:
         values = self.critic.predict(obs + [prev_allocs])
         advs = rews - values
 
-        self.actor.fit(obs + [rews, prev_allocs], [allocs],
+        self.actor.fit(obs + [advs, prev_allocs], [allocs],
                        batch_size=self.batch_size, shuffle=True,
                        epochs=self.epochs, verbose=False)
         self.critic.fit(obs + [prev_allocs], [advs],
@@ -180,8 +212,8 @@ class MetaAgent:
                     reward_history.append(reward_data)
 
                     # transform rewards based to discounted cumulative rewards
-                    # for j in range(len(tmp_batch['reward']) - 2, -1, -1):
-                    #     tmp_batch['reward'][j] += tmp_batch['reward'][j + 1] * self.gamma
+                    for j in range(len(tmp_batch['reward']) - 2, -1, -1):
+                        tmp_batch['reward'][j] += tmp_batch['reward'][j + 1] * self.gamma
 
                     # for each entry in the mini batch...
                     for i in range(len(tmp_batch['observation'])):

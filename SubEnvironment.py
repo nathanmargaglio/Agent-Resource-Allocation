@@ -9,7 +9,7 @@ from keras import backend as K
 
 class SubEnvironment:
     def __init__(self, friction=None, lookback=10, max_steps=100,
-            noise=None, amplitude=None, frequency=None, seed=None):
+            noise=None, amplitude=None, frequency=None, phase=None, seed=None):
         # cost of changing position
         self.fric = self.handle_param(friction, 0.1)
 
@@ -23,16 +23,19 @@ class SubEnvironment:
         self.max_steps = max_steps
 
         # noise to apply to the value
-        self.noise = self.handle_param(noise, 0)
+        self.noise_param = noise
 
         # max amplitude of value
-        self.amp = self.handle_param(amplitude, 1.)
+        self.amp_param = amplitude
 
         # frequency of value
-        self.freq = self.handle_param(frequency, np.random.randint(2,8))
+        self.freq_param = frequency
+
+        # phase (t-offset) of value
+        self.phase_param = phase
 
         # observation space (position + lookback)
-        self.observation_space = gym.spaces.Box(low=-1.*self.amp, high=1.0*self.amp,
+        self.observation_space = gym.spaces.Box(low=-1., high=1.0,
                 shape=(self.lookback+1,), dtype=np.float32)
 
         # set a seed for testing
@@ -68,7 +71,12 @@ class SubEnvironment:
         self.x_space = np.arange(self.max_steps)
 
         # Our "asset" space
-        self.a_space = (1-self.noise)*self.amp*np.sin(np.linspace(0,self.freq*np.pi,self.max_steps))
+        self.noise = self.handle_param(self.noise_param, 0)
+        self.amp = self.handle_param(self.amp_param, 1.)
+        self.freq = self.handle_param(self.freq_param, 4)
+        self.phase = self.handle_param(self.phase_param, 0)*self.max_steps
+
+        self.a_space = (1-self.noise)*self.amp*np.sin(np.linspace(self.phase,self.freq*np.pi+self.phase,self.max_steps))
         self.a_space += np.random.normal(0, self.amp*self.noise, size=self.a_space.shape)
 
         # The current position of the agent (0: neutral, 1: long)
