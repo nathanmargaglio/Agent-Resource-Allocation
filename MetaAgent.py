@@ -9,7 +9,7 @@ from keras import backend as K
 
 class MetaAgent:
     def __init__(self, env,
-                epsilon=0.2, gamma=0.99, entropy_loss=1e-3, actor_lr=0.001, critic_lr=0.005,
+                epsilon=0.2, gamma=0.99, entropy_loss=5e-3, actor_lr=0.001, critic_lr=0.005,
                 hidden_size=128, epochs=10, batch_size=64, buffer_size=256, seed=None):
         self.env = env
 
@@ -36,14 +36,16 @@ class MetaAgent:
 
         # Build Actor and Critic models
         self.actor = self.build_actor()
+        self.critic = self.build_critic()
 
         self.DUMMY_ALLOCATION = np.zeros(self.allocation_space.shape)
         self.DUMMY_VALUE = np.zeros((1, self.agent_count))
 
-    def proximal_policy_optimization_loss(self, advantage, debug=True):
+    def proximal_policy_optimization_loss(self, advantage, previous_allocation, debug=True):
         def loss(y_true, y_pred):
             y_pred = K.print_tensor(y_pred, 'pred ')
             adv = K.print_tensor(advantage, 'adva ')
+
             return -self.coef*adv*y_pred + self.entropy_loss*y_pred*K.log(y_pred+1e-10)
         return loss
 
@@ -66,8 +68,32 @@ class MetaAgent:
 
         model.compile(optimizer=Adam(lr=self.actor_lr),
                       loss=[self.proximal_policy_optimization_loss(
-                          advantage=advantage
+                          advantage=advantage,
+                          previous_allocation=previous_allocation
                       )])
+        return model
+
+    def build_critic(self):
+        # critic recieves the observation as input
+        observation_inputs = []
+        for i, sub_obs in enumerate(self.observation_spaces):
+            sub_input = Input(shape=sub_obs.shape, name='sub_obs_{}'.format(i))
+            observation_inputs.append(sub_input)
+        previous_allocation = Input(shape=self.allocation_space.shape, name='previous_allocation')
+
+	# hidden layers
+        x = concatenate(observation_inputs + [previous_allocation])
+        x = Dense(self.hidden_size, activation='relu')(state_inputs)
+        x = Dense(self.hidden_size, activation='relu')(x)
+
+        # we predict the value of the current observation
+        # i.e., cumulative discounted reward
+        values = Dense(self.allocation_space.shape[0], activation='linear')(x)
+
+        model = Model(inputs=observation_inputs + [previous_allocation],
+                      outputs=[values])
+        model.compile(optimizer=Adam(lr=self.critic_lr),
+                      loss='mse')
         return model
 
     def get_allocation(self, observations, prev_alloc):
@@ -81,10 +107,18 @@ class MetaAgent:
         obs = observations[:self.buffer_size]
         allocs = allocations[:self.buffer_size]
         rews = rewards[:self.buffer_size]
+
         prev_allocs = previous_allocations[:self.buffer_size]
         obs = np.split(obs, obs.shape[1], axis=1)
         obs = [o.reshape(o.shape[0], o.shape[2]) for o in obs]
+
+        values = self.critic.predict(obs + [prev_allocs])
+        advs = rews - values
+
         self.actor.fit(obs + [rews, prev_allocs], [allocs],
+                       batch_size=self.batch_size, shuffle=True,
+                       epochs=self.epochs, verbose=False)
+        self.critic.fit(obs + [prev_allocs], [advs],
                        batch_size=self.batch_size, shuffle=True,
                        epochs=self.epochs, verbose=False)
 

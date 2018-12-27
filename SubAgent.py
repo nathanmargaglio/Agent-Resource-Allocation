@@ -177,7 +177,7 @@ class SubAgent:
         self.actor.fit([obs, advs, old_probs], [acts],
                        batch_size=self.batch_size, shuffle=True,
                        epochs=self.epochs, verbose=False)
-        self.critic.fit([obs], [rews],
+        self.critic.fit([obs], [advs],
                        batch_size=self.batch_size, shuffle=True,
                         epochs=self.epochs, verbose=False)
 
