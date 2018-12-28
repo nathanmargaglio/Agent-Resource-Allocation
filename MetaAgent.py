@@ -252,7 +252,9 @@ class MetaAgent(Agent):
                         for n, reward in enumerate(self.env.sub_episode_rewards):
                             self.log_scalar('sub_reward_{}'.format(n), reward, episode)
 
-                        self.log_scalar('meta_reward', reward_data, episode)
+                        self.log_scalar('meta_reward', self.env.running_reward, episode)
+                        self.log_scalar('uniform_meta_reward', self.env.uniform_running_reward, episode)
+                        self.log_scalar('random_meta_reward', self.env.random_running_reward, episode)
 
                     if self.save_images and self.train_step % self.log_image_interval == 0:
                         figs = self.env.render()
