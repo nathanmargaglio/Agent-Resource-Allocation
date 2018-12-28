@@ -10,18 +10,18 @@ from keras import backend as K
 from SubAgent import SubAgent
 
 class MetaEnvironment:
-    def __init__(self, envs, friction=0., seed=None):
-        self.envs = envs
-        self.env_count = len(envs)
-
-        self.allocation_space = gym.spaces.Box(low=0.0, high=1.0, shape=(self.env_count,), dtype=np.float32)
+    def __init__(self, agents, friction=0., seed=None):
         self.observation_spaces = []
-        self.agents = []
-        for env in self.envs:
-            self.agents.append(SubAgent(env))
-            self.observation_spaces.append(env.observation_space)
+        self.envs = []
+        self.agents = agents
 
+        for agent in self.agents:
+            self.envs.append(agent.env)
+            self.observation_spaces.append(agent.env.observation_space)
+
+        self.env_count = len(self.envs)
         self.agent_count = len(self.agents)
+        self.allocation_space = gym.spaces.Box(low=0.0, high=1.0, shape=(self.env_count,), dtype=np.float32)
         self.friction = friction
         self.seed = seed
 

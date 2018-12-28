@@ -18,6 +18,7 @@ class Agent:
         self.root_logger.addHandler(self.console_handler)
         self.set_meta_data()
         self.save_run = True
+        self.save_images = True
 
     def set_meta_data(self, name=None, path='./runs/'):
         if path[-1] != '/':
@@ -26,6 +27,7 @@ class Agent:
             name = 'run'
         self.name = name
         self.path = path
+        self.version = 0
         self.run_path = None
         self.callbacks = []
         self.writer = None
@@ -34,21 +36,25 @@ class Agent:
         self.root_logger.addHandler(self.console_handler)
 
     def log_scalar(self, tag, value, step, writer='meta'):
-        writers = {
-                'meta': self.writer,
-                'uniform': self.uniform_writer,
-                'random': self.random_writer
-                }
-        for n, w in enumerate(self.sub_writers):
-            writers['sub_{}'.format(n)] = w
-        summary = tf.Summary(value=[tf.Summary.Value(tag=tag,simple_value=value)])
-        writers[writer].add_summary(summary, step)
-        self.root_logger.info("{} [{}] - {}".format(tag, step, value))
+        if self.save_run:
+            writers = {
+                    'meta': self.writer,
+                    'uniform': self.uniform_writer,
+                    'random': self.random_writer
+                    }
+            for n, w in enumerate(self.sub_writers):
+                writers['sub_{}'.format(n)] = w
+            summary = tf.Summary(value=[tf.Summary.Value(tag=tag,simple_value=value)])
+            writers[writer].add_summary(summary, step)
+
+        self.root_logger.info("{} \t- {} [{}] \t- {}".format(writer, tag, step, value))
 
     def log(self, value):
         self.root_logger.info(value)
 
     def log_image(self, tag, image, step):
+        if not self.save_images:
+            return
         s = BytesIO()
         plt.imsave(s, image, format='png')
         img_sum = tf.Summary.Image(

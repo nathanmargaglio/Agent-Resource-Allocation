@@ -168,16 +168,20 @@ class MetaAgent(Agent):
                        epochs=self.epochs, verbose=False,
                        callbacks=self.callbacks)
 
-    def run(self, episodes, name=None, verbose=False, test_run=False):
+    def run(self, episodes=1, name=None, verbose=False, test_run=False):
         episode = 0
         reward_history = []
         end_test=False
         self.train_step = 0
 
-        if self.save_run:
+        if not test_run:
+            self.save_run = True
+            self.save_images = True
             self.set_meta_data(name)
             self.create_run_dir()
         else:
+            self.save_run = False
+            self.save_images = False
             self.set_meta_data(name)
 
         self.log("Starting run: {} v{}".format(self.name, self.version))
@@ -224,6 +228,10 @@ class MetaAgent(Agent):
                 observations = next_observations
                 previous_alloc_vector = alloc_vector
 
+                if test_run:
+                    figs = self.env.render()
+                    plt.show()
+
                 # if the episode is at a terminal state...
                 if done:
                     # log some reward data (for plotting)
@@ -248,7 +256,7 @@ class MetaAgent(Agent):
                         batch['previous_allocation_vector'].append(previous_alloc)
                         batch['reward'].append(r)
 
-                    if self.save_run and self.train_step % self.log_interval == 0:
+                    if self.train_step % self.log_interval == 0:
                         for n, reward in enumerate(self.env.sub_episode_rewards):
                             self.log_scalar('reward', reward, episode, 'sub_{}'.format(n))
 
@@ -256,12 +264,12 @@ class MetaAgent(Agent):
                         self.log_scalar('reward', self.env.uniform_running_reward, episode, 'uniform')
                         self.log_scalar('reward', self.env.random_running_reward, episode, 'random')
 
-                    if self.save_images and self.train_step % self.log_image_interval == 0:
+                    if self.train_step % self.log_image_interval == 0:
                         figs = self.env.render()
                         for n, f in enumerate(figs['sub']):
                             self.log_plot('sub_plot_{}'.format(n), f, episode)
                         self.log_plot('meta_plot', figs['meta'], episode)
-                        if self.live_plot:
+                        if test_run:
                             plt.show()
                         else:
                             plt.close('all')
