@@ -2,12 +2,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import gym
 
+from Agent import Agent
 from keras.layers import Input, Dense, concatenate
 from keras.models import Model
 from keras.optimizers import Adam
 from keras import backend as K
 
-class SubAgent:
+class SubAgent(Agent):
     def __init__(self, env,
                 epsilon=0.2, gamma=0.99, entropy_loss=1e-3, actor_lr=0.001, critic_lr=0.005,
                 hidden_size=128, epochs=10, batch_size=64, buffer_size=256):

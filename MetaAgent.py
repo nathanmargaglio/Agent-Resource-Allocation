@@ -2,15 +2,18 @@ import numpy as np
 import matplotlib.pyplot as plt
 import gym
 
+
+from Agent import Agent
 from keras.layers import Input, Dense, concatenate
 from keras.models import Model
 from keras.optimizers import Adam
 from keras import backend as K
 
-class MetaAgent:
+class MetaAgent(Agent):
     def __init__(self, env,
                 epsilon=0.2, gamma=0.99, entropy_loss=1e-3, actor_lr=0.001, critic_lr=0.005,
                 hidden_size=128, epochs=10, batch_size=64, buffer_size=256, seed=None):
+        super().__init__()
         self.env = env
 
         self.envs = env.envs
@@ -124,8 +127,7 @@ class MetaAgent:
 
         model = Model(inputs=observation_inputs + [previous_allocation],
                       outputs=[values])
-        model.compile(optimizer=Adam(lr=self.critic_lr),
-                      loss='mse')
+        model.compile(optimizer=Adam(lr=self.critic_lr), loss='mse', metrics=['mse'])
         return model
 
     def get_allocation(self, observations, prev_alloc):
@@ -147,18 +149,32 @@ class MetaAgent:
         values = self.critic.predict(obs + [prev_allocs])
         advs = rews - values
 
+        self.log_scalar('test_tag', np.sum(advs), self.train_step)
+        self.train_step += 1
+
         self.actor.fit(obs + [advs, prev_allocs], [allocs],
                        batch_size=self.batch_size, shuffle=True,
-                       epochs=self.epochs, verbose=False)
+                       epochs=self.epochs, verbose=False,
+                       callbacks=self.callbacks)
         self.critic.fit(obs + [prev_allocs], [advs],
                        batch_size=self.batch_size, shuffle=True,
-                       epochs=self.epochs, verbose=False)
+                       epochs=self.epochs, verbose=False,
+                       callbacks=self.callbacks)
 
-    def run(self, episodes, verbose=False, test_run=False):
+    def run(self, episodes, log=False, name=None,
+            subagent_train_eps=10, verbose=False, test_run=False):
         episode = 0
         reward_history = []
         end_test=False
+        self.train_step = 0
 
+        if log:
+            self.set_meta_data(name)
+            self.create_run_dir()
+        else:
+            self.set_meta_data(name)
+
+        self.log("Starting run: {} v{}".format(self.name, self.version))
         # reset the environment
         observations = self.env.reset()
 
@@ -228,6 +244,13 @@ class MetaAgent:
                         batch['allocation_vector'].append(alloc)
                         batch['previous_allocation_vector'].append(previous_alloc)
                         batch['reward'].append(r)
+
+                    # train the subagents
+                    if subagent_train_eps is not None:
+                        print("Training SubAgents...")
+                        for n, agent in enumerate(self.agents):
+                            rh = agent.run(subagent_train_eps)
+                            print("SubAgent {} Reward: {}".format(n, rh[-1]))
 
                     # every 10th episode, log some stuff
                     if (episode + 1) % 25 == 0:
