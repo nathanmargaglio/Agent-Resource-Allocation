@@ -253,8 +253,8 @@ class MetaAgent(Agent):
                             self.log_scalar('sub_reward_{}'.format(n), reward, episode)
 
                         self.log_scalar('meta_reward', self.env.running_reward, episode)
-                        self.log_scalar('uniform_meta_reward', self.env.uniform_running_reward, episode)
-                        self.log_scalar('random_meta_reward', self.env.random_running_reward, episode)
+                        self.log_scalar('meta_uniform_reward', self.env.uniform_running_reward, episode)
+                        self.log_scalar('meta_random_reward', self.env.random_running_reward, episode)
 
                     if self.save_images and self.train_step % self.log_image_interval == 0:
                         figs = self.env.render()
