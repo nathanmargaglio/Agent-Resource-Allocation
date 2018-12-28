@@ -33,9 +33,16 @@ class Agent:
         self.root_logger.handlers = []
         self.root_logger.addHandler(self.console_handler)
 
-    def log_scalar(self, tag, value, step):
+    def log_scalar(self, tag, value, step, writer='meta'):
+        writers = {
+                'meta': self.writer,
+                'uniform': self.uniform_writer,
+                'random': self.random_writer
+                }
+        for n, w in enumerate(self.sub_writers):
+            writers['sub_{}'.format(n)] = w
         summary = tf.Summary(value=[tf.Summary.Value(tag=tag,simple_value=value)])
-        self.writer.add_summary(summary, step)
+        writers[writer].add_summary(summary, step)
         self.root_logger.info("{} [{}] - {}".format(tag, step, value))
 
     def log(self, value):
@@ -77,10 +84,16 @@ class Agent:
             extra_version += 1
 
         os.makedirs(self.run_path)
+        self.tb_path = self.run_path + 'tb/'
 
         self.callbacks = self.create_callbacks()
-        self.writer = tf.summary.FileWriter(self.run_path + 'tb_data', filename_suffix='_data')
-        self.image_writer = tf.summary.FileWriter(self.run_path + 'tb_images', filename_suffix='_images')
+        self.writer = tf.summary.FileWriter(self.run_path + 'meta', filename_suffix='_meta')
+        self.uniform_writer = tf.summary.FileWriter(self.run_path + 'uniform', filename_suffix='_uniform')
+        self.random_writer = tf.summary.FileWriter(self.run_path + 'random', filename_suffix='_random')
+        self.sub_writers = []
+        for i in range(self.agent_count):
+            self.sub_writers.append(tf.summary.FileWriter(self.run_path + 'sub_{}'.format(i), filename_suffix='_sub'))
+        self.image_writer = tf.summary.FileWriter(self.run_path + 'images', filename_suffix='_images')
 
         self.file_handler = logging.FileHandler(self.run_path + "log.txt")
         self.file_handler.setFormatter(self.log_formatter)

@@ -184,6 +184,7 @@ class SubAgent(Agent):
 
     def run(self, episodes, verbose=False):
         episode = 0
+        self.reward_data = 0
         reward_history = []
 
         # reset the environment
@@ -228,8 +229,8 @@ class SubAgent(Agent):
                 # if the episode is at a terminal state...
                 if done:
                     # log some reward data (for plotting)
-                    reward_data = np.sum(tmp_batch['reward'])
-                    reward_history.append(reward_data)
+                    self.reward_data = np.sum(tmp_batch['reward'])
+                    reward_history.append(self.reward_data)
 
                     # transform rewards based to discounted cumulative rewards
                     for j in range(len(tmp_batch['reward']) - 2, -1, -1):
@@ -252,7 +253,7 @@ class SubAgent(Agent):
                     # every 10th episode, log some stuff
                     if (episode+1) % 10 == 0 and verbose:
                         print('Episode:', episode)
-                        print('Reward :', reward_data)
+                        print('Reward :', self.reward_data)
                         print('Average:', np.mean(reward_history[-100:]))
                         print('-'*10)
                         print()
