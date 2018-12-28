@@ -39,15 +39,15 @@ class Agent:
         if self.save_run:
             writers = {
                     'meta': self.writer,
-                    'uniform': self.uniform_writer,
-                    'random': self.random_writer
+                    'uni': self.uniform_writer,
+                    'rand': self.random_writer
                     }
             for n, w in enumerate(self.sub_writers):
                 writers['sub_{}'.format(n)] = w
             summary = tf.Summary(value=[tf.Summary.Value(tag=tag,simple_value=value)])
             writers[writer].add_summary(summary, step)
 
-        self.root_logger.info("{} \t- {} [{}] \t- {}".format(writer, tag, step, value))
+        self.root_logger.info("{} \t {} [{}] \t {}".format(writer, tag, step, value))
 
     def log(self, value):
         self.root_logger.info(value)

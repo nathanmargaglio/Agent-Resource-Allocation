@@ -48,7 +48,7 @@ class SubEnvironment:
             return default
         elif type(param) == tuple:
             # if a tuple is passed, a random value is picked in the range
-            return (param[1] - param[0])*np.random.rand() + param[1]
+            return (param[1] - param[0])*np.random.rand() + param[0]
         else:
             # we assume it's a number, and set it directly
             return float(param)

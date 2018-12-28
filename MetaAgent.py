@@ -168,7 +168,7 @@ class MetaAgent(Agent):
                        epochs=self.epochs, verbose=False,
                        callbacks=self.callbacks)
 
-    def run(self, episodes=1, name=None, verbose=False, test_run=False):
+    def run(self, episodes=1, name=None, verbose=False, test_run=False, copy_subenv=False):
         episode = 0
         reward_history = []
         end_test=False
@@ -186,6 +186,7 @@ class MetaAgent(Agent):
 
         self.log("Starting run: {} v{}".format(self.name, self.version))
         # reset the environment
+        self.env.set_copy_subenv(copy_subenv)
         observations = self.env.reset()
 
         # Collect a batch of samples
@@ -261,8 +262,8 @@ class MetaAgent(Agent):
                             self.log_scalar('reward', reward, episode, 'sub_{}'.format(n))
 
                         self.log_scalar('reward', self.env.running_reward, episode, 'meta')
-                        self.log_scalar('reward', self.env.uniform_running_reward, episode, 'uniform')
-                        self.log_scalar('reward', self.env.random_running_reward, episode, 'random')
+                        self.log_scalar('reward', self.env.uniform_running_reward, episode, 'uni')
+                        self.log_scalar('reward', self.env.random_running_reward, episode, 'rand')
 
                     if self.train_step % self.log_image_interval == 0:
                         figs = self.env.render()

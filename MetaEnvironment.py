@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import gym
+from copy import deepcopy
 
 from keras.layers import Input, Dense, concatenate
 from keras.models import Model
@@ -24,6 +25,10 @@ class MetaEnvironment:
         self.allocation_space = gym.spaces.Box(low=0.0, high=1.0, shape=(self.env_count,), dtype=np.float32)
         self.friction = friction
         self.seed = seed
+        self.copy_subenv = False
+
+    def set_copy_subenv(self, status):
+        self.copy_subenv = status
 
     def reset(self):
         self.allocation = np.ones(shape=(self.env_count,))
@@ -32,10 +37,19 @@ class MetaEnvironment:
 
         observations = []
         rewards = []
-        for env in self.envs:
-            obs = env.reset()
-            rewards.append(0)
-            observations.append(obs)
+        if not self.copy_subenv:
+            for env in self.envs:
+                obs = env.reset()
+                rewards.append(0)
+                observations.append(obs)
+        else:
+            clone_obs = self.envs[0].reset()
+            clone_env = deepcopy(self.envs[0])
+            self.envs = []
+            for i in range(self.env_count):
+                self.envs.append(deepcopy(clone_env))
+                rewards.append(0)
+                observations.append(clone_obs)
 
         self.observations = np.array(observations)
         self.rewards = np.array(rewards)
