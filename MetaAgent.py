@@ -12,7 +12,7 @@ from keras import backend as K
 class MetaAgent(Agent):
     def __init__(self, env, epsilon=0.2, gamma=0.99, entropy_loss=1e-3,
             actor_lr=0.001, critic_lr=0.005, hidden_size=128, epochs=10, batch_size=64,
-            buffer_size=256, seed=None,
+            buffer_size=256, seed=None, live_plot=False,
             save_run=True, save_images=True, log_interval=1, log_image_interval=None):
 
         super().__init__()
@@ -22,6 +22,7 @@ class MetaAgent(Agent):
         if log_image_interval is None:
             log_image_interval = self.log_interval
         self.log_image_interval = log_image_interval
+        self.live_plot = live_plot
 
         self.env = env
 
@@ -56,7 +57,7 @@ class MetaAgent(Agent):
         def loss(y_true, y_pred):
             adv = advantage
             if debug:
-                adv = K.print_tensor(adv, '\n******\nadvantage     :')
+                adv = K.print_tensor(adv, 'advantage     :')
 
             if debug:
                 y_true = K.print_tensor(y_true, 'y_true        :')
@@ -248,14 +249,20 @@ class MetaAgent(Agent):
                         batch['reward'].append(r)
 
                     if self.save_run and self.train_step % self.log_interval == 0:
-                        self.log_scalar('episode_reward', reward_data, episode)
+                        for n, reward in enumerate(self.env.sub_episode_rewards):
+                            self.log_scalar('sub_reward_{}'.format(n), reward, episode)
+
+                        self.log_scalar('meta_reward', reward_data, episode)
 
                     if self.save_images and self.train_step % self.log_image_interval == 0:
                         figs = self.env.render()
                         for n, f in enumerate(figs['sub']):
                             self.log_plot('sub_plot_{}'.format(n), f, episode)
                         self.log_plot('meta_plot', figs['meta'], episode)
-                        plt.close('all')
+                        if self.live_plot:
+                            plt.show()
+                        else:
+                            plt.close('all')
 
                     # reset the environment
                     observations = self.env.reset()
@@ -270,6 +277,7 @@ class MetaAgent(Agent):
 
                     # increment the episode count
                     episode += 1
+                    self.train_step += 1
 
                     if test_run:
                         end_test = True
@@ -284,7 +292,6 @@ class MetaAgent(Agent):
                 # train the agent on the batched data
                 self.train_batch(_observations, _allocs, _rewards, _prev_allocs)
 
-            self.train_step += 1
 
         self.reward_history = reward_history
         return self.reward_history

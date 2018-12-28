@@ -79,8 +79,8 @@ class Agent:
         os.makedirs(self.run_path)
 
         self.callbacks = self.create_callbacks()
-        self.writer = tf.summary.FileWriter(self.run_path, filename_suffix='_data')
-        self.image_writer = tf.summary.FileWriter(self.run_path, filename_suffix='_images')
+        self.writer = tf.summary.FileWriter(self.run_path + 'tb_data', filename_suffix='_data')
+        self.image_writer = tf.summary.FileWriter(self.run_path + 'tb_images', filename_suffix='_images')
 
         self.file_handler = logging.FileHandler(self.run_path + "log.txt")
         self.file_handler.setFormatter(self.log_formatter)
