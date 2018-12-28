@@ -127,4 +127,4 @@ class SubEnvironment:
         ax[0].plot([self.t], [self.a_space[self.t]], 'o')
         ax[1].plot(self.episode_rewards)
 
-        plt.show()
+        return fig

@@ -10,10 +10,19 @@ from keras.optimizers import Adam
 from keras import backend as K
 
 class MetaAgent(Agent):
-    def __init__(self, env,
-                epsilon=0.2, gamma=0.99, entropy_loss=1e-3, actor_lr=0.001, critic_lr=0.005,
-                hidden_size=128, epochs=10, batch_size=64, buffer_size=256, seed=None):
+    def __init__(self, env, epsilon=0.2, gamma=0.99, entropy_loss=1e-3,
+            actor_lr=0.001, critic_lr=0.005, hidden_size=128, epochs=10, batch_size=64,
+            buffer_size=256, seed=None,
+            save_run=True, save_images=True, log_interval=1, log_image_interval=None):
+
         super().__init__()
+        self.save_run = save_run
+        self.save_images = save_images
+        self.log_interval = log_interval
+        if log_image_interval is None:
+            log_image_interval = self.log_interval
+        self.log_image_interval = log_image_interval
+
         self.env = env
 
         self.envs = env.envs
@@ -149,9 +158,6 @@ class MetaAgent(Agent):
         values = self.critic.predict(obs + [prev_allocs])
         advs = rews - values
 
-        self.log_scalar('test_tag', np.sum(advs), self.train_step)
-        self.train_step += 1
-
         self.actor.fit(obs + [advs, prev_allocs], [allocs],
                        batch_size=self.batch_size, shuffle=True,
                        epochs=self.epochs, verbose=False,
@@ -161,14 +167,13 @@ class MetaAgent(Agent):
                        epochs=self.epochs, verbose=False,
                        callbacks=self.callbacks)
 
-    def run(self, episodes, log=False, name=None,
-            subagent_train_eps=10, verbose=False, test_run=False):
+    def run(self, episodes, name=None, verbose=False, test_run=False):
         episode = 0
         reward_history = []
         end_test=False
         self.train_step = 0
 
-        if log:
+        if self.save_run:
             self.set_meta_data(name)
             self.create_run_dir()
         else:
@@ -218,9 +223,6 @@ class MetaAgent(Agent):
                 observations = next_observations
                 previous_alloc_vector = alloc_vector
 
-                if test_run:
-                    self.env.render()
-
                 # if the episode is at a terminal state...
                 if done:
                     # log some reward data (for plotting)
@@ -245,21 +247,15 @@ class MetaAgent(Agent):
                         batch['previous_allocation_vector'].append(previous_alloc)
                         batch['reward'].append(r)
 
-                    # train the subagents
-                    if subagent_train_eps is not None:
-                        print("Training SubAgents...")
-                        for n, agent in enumerate(self.agents):
-                            rh = agent.run(subagent_train_eps)
-                            print("SubAgent {} Reward: {}".format(n, rh[-1]))
+                    if self.save_run and self.train_step % self.log_interval == 0:
+                        self.log_scalar('episode_reward', reward_data, episode)
 
-                    # every 10th episode, log some stuff
-                    if (episode + 1) % 25 == 0:
-                        print('Episode:', episode)
-                        print('Reward :', reward_data)
-                        print('Average:', np.mean(reward_history[-25:]))
-                        print('-'*10)
-                        print()
-                        self.env.render()
+                    if self.save_images and self.train_step % self.log_image_interval == 0:
+                        figs = self.env.render()
+                        for n, f in enumerate(figs['sub']):
+                            self.log_plot('sub_plot_{}'.format(n), f, episode)
+                        self.log_plot('meta_plot', figs['meta'], episode)
+                        plt.close('all')
 
                     # reset the environment
                     observations = self.env.reset()
@@ -278,18 +274,17 @@ class MetaAgent(Agent):
                     if test_run:
                         end_test = True
 
-            if test_run:
-                break
+            if not test_run:
+                # we've filled up our master batch, so we unpack it into numpy arrays
+                _observations = np.array(batch['observation'])
+                _allocs = np.array(batch['allocation_vector'])
+                _prev_allocs = np.array(batch['previous_allocation_vector'])
+                _rewards = np.array(batch['reward'])
 
-            # we've filled up our master batch, so we unpack it into numpy arrays
-            _observations = np.array(batch['observation'])
-            _allocs = np.array(batch['allocation_vector'])
-            _prev_allocs = np.array(batch['previous_allocation_vector'])
-            _rewards = np.array(batch['reward'])
-            #rewards = np.reshape(rewards, (len(batch['reward']), 1))
+                # train the agent on the batched data
+                self.train_batch(_observations, _allocs, _rewards, _prev_allocs)
 
-            # train the agent on the batched data
-            self.train_batch(_observations, _allocs, _rewards, _prev_allocs)
+            self.train_step += 1
 
         self.reward_history = reward_history
         return self.reward_history

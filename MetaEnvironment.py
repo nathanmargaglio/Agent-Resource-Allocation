@@ -67,9 +67,10 @@ class MetaEnvironment:
         return self.observations, self.rewards, done, {}
 
     def render(self):
+        figs = {}
+        figs['sub'] = []
         for i, env in enumerate(self.envs):
-            print('Sub {}'.format(i))
-            env.render()
+            figs['sub'].append(env.render())
 
         fig, ax = plt.subplots(1,2,figsize=(12,4),gridspec_kw = {'width_ratios':[2, 1]})
 
@@ -77,5 +78,5 @@ class MetaEnvironment:
         ax[0].bar(range(self.env_count), self.allocation)
         ax[1].plot(self.running_rewards)
 
-        print("Meta")
-        plt.show()
+        figs['meta'] = fig
+        return figs
