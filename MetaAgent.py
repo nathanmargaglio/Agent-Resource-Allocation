@@ -66,8 +66,8 @@ class MetaAgent(Agent):
         assert self.model_path is not None, "Can't load models: create run first."
         for agent in self.agents:
             agent.load_models()
-        self.actor.load_weights(self.model_path + 'meta_actor.h5'.format(self.index))
-        self.critic.load_weights(self.model_path + 'meta_critic.h5'.format(self.index))
+        self.actor.load_weights(self.model_path + 'meta_actor.h5')
+        self.critic.load_weights(self.model_path + 'meta_critic.h5')
 
 
     def proximal_policy_optimization_loss(self, advantage, previous_allocation, debug=True):
@@ -100,7 +100,7 @@ class MetaAgent(Agent):
             if debug:
                 minimum = K.print_tensor(minimum, 'minimum       :')
 
-            entropy_bonus = self.entropy_loss * (alloc * K.log(alloc + 1e-10))
+            entropy_bonus = -self.entropy_loss * (alloc * K.log(alloc + 1e-10))
             if debug:
                 entropy_bonus = K.print_tensor(entropy_bonus, 'entropy_bonus :')
 
@@ -248,7 +248,9 @@ class MetaAgent(Agent):
                 observations = next_observations
                 previous_alloc_vector = alloc_vector
 
-                if (test_run or self.live_plot) and self.train_step % self.log_image_interval == 0:
+                if (test_run or self.live_plot)\
+                        and (self.train_step % self.log_image_interval == 0):
+                    print('episode', self.episode)
                     figs = self.env.render()
                     plt.show()
 
@@ -276,7 +278,7 @@ class MetaAgent(Agent):
                         batch['previous_allocation_vector'].append(previous_alloc)
                         batch['reward'].append(r)
 
-                    if self.episode % self.log_interval == 0:
+                    if (self.episode % self.log_interval == 0) or self.episode >= episodes:
                         for n, reward in enumerate(self.env.sub_episode_rewards):
                             self.log_scalar('reward', reward, self.episode, 'sub_{}'.format(n))
 
@@ -284,7 +286,7 @@ class MetaAgent(Agent):
                         self.log_scalar('reward', self.env.uniform_running_reward, self.episode, 'uni')
                         self.log_scalar('reward', self.env.random_running_reward, self.episode, 'rand')
 
-                    if self.episode % self.log_image_interval == 0:
+                    if (self.episode % self.log_image_interval == 0) or self.episode >= episodes:
                         figs = self.env.render()
                         for n, f in enumerate(figs['sub']):
                             self.log_plot('sub_plot_{}'.format(n), f, self.episode)
