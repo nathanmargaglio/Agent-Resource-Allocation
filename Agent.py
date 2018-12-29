@@ -16,19 +16,23 @@ class Agent:
         self.console_handler.setFormatter(self.log_formatter)
         self.console_handler.setLevel(logging.INFO)
         self.root_logger.addHandler(self.console_handler)
-        self.set_meta_data()
         self.save_run = True
         self.save_images = True
 
-    def set_meta_data(self, name=None, path='./runs/'):
+    def set_meta_data(self, name=None, version=0, path='./runs/'):
         if path[-1] != '/':
             path.append('/')
         if name is None:
             name = 'run'
         self.name = name
         self.path = path
-        self.version = 0
-        self.run_path = None
+        self.version = version
+        self.run_path = "{}{}-{}/".format(self.path, self.name, self.version)
+        self.model_path = self.run_path + 'models/'
+        self.tb_path = self.run_path + 'tb/'
+        for agent in self.agents:
+            agent.set_path(self.run_path)
+
         self.callbacks = []
         self.writer = None
         self.image_writer = None
@@ -82,7 +86,7 @@ class Agent:
             os.makedirs(path)
             return []
 
-    def create_run_dir(self):
+    def create_new_run(self):
         extra_version = 0
         while self.run_path is None or os.path.exists(self.run_path):
             self.version = len(self.get_previous_models(self.name, self.path)) + extra_version
@@ -92,14 +96,21 @@ class Agent:
         os.makedirs(self.run_path)
         self.tb_path = self.run_path + 'tb/'
 
+        self.model_path = self.run_path + 'models/'
+        os.makedirs(self.model_path)
+
+        for i, agent in enumerate(self.agents):
+            agent.set_path(self.run_path)
+            agent.set_index(i)
+
         self.callbacks = self.create_callbacks()
-        self.writer = tf.summary.FileWriter(self.run_path + 'meta', filename_suffix='_meta')
-        self.uniform_writer = tf.summary.FileWriter(self.run_path + 'uniform', filename_suffix='_uniform')
-        self.random_writer = tf.summary.FileWriter(self.run_path + 'random', filename_suffix='_random')
+        self.writer = tf.summary.FileWriter(self.tb_path + 'meta', filename_suffix='_meta')
+        self.uniform_writer = tf.summary.FileWriter(self.tb_path + 'uniform', filename_suffix='_uniform')
+        self.random_writer = tf.summary.FileWriter(self.tb_path + 'random', filename_suffix='_random')
         self.sub_writers = []
         for i in range(self.agent_count):
-            self.sub_writers.append(tf.summary.FileWriter(self.run_path + 'sub_{}'.format(i), filename_suffix='_sub'))
-        self.image_writer = tf.summary.FileWriter(self.run_path + 'images', filename_suffix='_images')
+            self.sub_writers.append(tf.summary.FileWriter(self.tb_path + 'sub_{}'.format(i), filename_suffix='_sub'))
+        self.image_writer = tf.summary.FileWriter(self.tb_path + 'images', filename_suffix='_images')
 
         self.file_handler = logging.FileHandler(self.run_path + "log.txt")
         self.file_handler.setFormatter(self.log_formatter)

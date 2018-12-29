@@ -1,20 +1,24 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import gym
+import os
 
 from Agent import Agent
 from keras.layers import Input, Dense, concatenate
-from keras.models import Model
+from keras.models import Model, load_model
 from keras.optimizers import Adam
 from keras import backend as K
 
 class SubAgent(Agent):
-    def __init__(self, env,
+    def __init__(self, env, index=None, path=None, clear_session=False,
                 epsilon=0.2, gamma=0.99, entropy_loss=1e-3, actor_lr=0.001, critic_lr=0.005,
                 hidden_size=128, epochs=10, batch_size=64, buffer_size=256):
         # Clear Tensorflow session and set some metadata
-        # K.clear_session()
+        if clear_session:
+            K.clear_session()
         self.env = env
+        self.set_path(path)
+        self.set_index(index)
 
         self.action_space = env.action_space
         self.observation_space = env.observation_space
@@ -38,6 +42,34 @@ class SubAgent(Agent):
         # the observation, the old prob, and the advantage.
         # Here, we just created data to spoof the last two.
         self.DUMMY_ACTION, self.DUMMY_VALUE = np.zeros((1,self.action_space.n)), np.zeros((1,1))
+
+    def get_previous_models(self):
+        files = os.listdir(self.model_path)
+        return files
+
+    def set_index(self, index):
+        if index is None:
+            index = len(self.get_previous_models())
+        self.index = index
+
+    def set_path(self, path):
+        if path is None:
+            path = './runs/tmp/'
+        self.run_path = path
+        self.model_path = self.run_path + 'models/'
+        os.makedirs(self.model_path, exist_ok=True)
+
+    def save_models(self):
+        assert self.index is not None, "Can't save models: set index first."
+        assert self.model_path is not None, "Can't save models: set path first."
+        self.actor.save_weights(self.model_path + 'sub_{}_actor.h5'.format(self.index))
+        self.critic.save_weights(self.model_path + 'sub_{}_critic.h5'.format(self.index))
+
+    def load_models(self):
+        assert self.index is not None, "Can't load models: set index first."
+        assert self.model_path is not None, "Can't load models: set path first."
+        self.actor.load_weights("{}".format(self.model_path + 'sub_{}_actor.h5'.format(self.index)))
+        self.critic.load_weights(self.model_path + 'sub_{}_critic.h5'.format(self.index))
 
     def proximal_policy_optimization_loss(self, advantage, old_pred, debug=True):
 

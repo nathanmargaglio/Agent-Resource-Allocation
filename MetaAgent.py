@@ -10,8 +10,8 @@ from keras.optimizers import Adam
 from keras import backend as K
 
 class MetaAgent(Agent):
-    def __init__(self, env, epsilon=0.2, gamma=0.99, entropy_loss=1e-3,
-            actor_lr=0.001, critic_lr=0.005, hidden_size=128, epochs=10, batch_size=64,
+    def __init__(self, env, name=None, version=0, epsilon=0.05, gamma=0.99, entropy_loss=1e-3,
+            actor_lr=1e-4, critic_lr=1e-4, hidden_size=128, epochs=8, batch_size=64,
             buffer_size=256, seed=None, live_plot=False,
             save_run=True, save_images=True, log_interval=1, log_image_interval=None):
 
@@ -20,7 +20,7 @@ class MetaAgent(Agent):
         self.save_images = save_images
         self.log_interval = log_interval
         if log_image_interval is None:
-            log_image_interval = 10
+            log_image_interval = 128
         self.log_image_interval = log_image_interval
         self.live_plot = live_plot
 
@@ -53,6 +53,23 @@ class MetaAgent(Agent):
         self.DUMMY_ALLOCATION = np.zeros(self.allocation_space.shape)
         self.DUMMY_VALUE = np.zeros((1, self.agent_count))
 
+        self.set_meta_data(name, version)
+
+    def save_models(self):
+        assert self.model_path is not None, "Can't save models: create run first."
+        for agent in self.agents:
+            agent.save_models()
+        self.actor.save_weights(self.model_path + 'meta_actor.h5')
+        self.critic.save_weights(self.model_path + 'meta_critic.h5')
+
+    def load_models(self):
+        assert self.model_path is not None, "Can't load models: create run first."
+        for agent in self.agents:
+            agent.load_models()
+        self.actor.load_weights(self.model_path + 'meta_actor.h5'.format(self.index))
+        self.critic.load_weights(self.model_path + 'meta_critic.h5'.format(self.index))
+
+
     def proximal_policy_optimization_loss(self, advantage, previous_allocation, debug=True):
         def loss(y_true, y_pred):
             adv = advantage
@@ -83,7 +100,7 @@ class MetaAgent(Agent):
             if debug:
                 minimum = K.print_tensor(minimum, 'minimum       :')
 
-            entropy_bonus = self.entropy_loss * (y_pred * K.log(y_pred + 1e-10))
+            entropy_bonus = self.entropy_loss * (alloc * K.log(alloc + 1e-10))
             if debug:
                 entropy_bonus = K.print_tensor(entropy_bonus, 'entropy_bonus :')
 
@@ -168,21 +185,22 @@ class MetaAgent(Agent):
                        epochs=self.epochs, verbose=False,
                        callbacks=self.callbacks)
 
-    def run(self, episodes=1, name=None, verbose=False, test_run=False, copy_subenv=False):
+    def run(self, episodes=1, verbose=False, test_run=False, copy_subenv=False, live_plot=None):
         self.episode = 0
         self.train_step = 0
         reward_history = []
         end_test=False
 
+        if live_plot is not None:
+            self.live_plot = live_plot
+
         if not test_run:
             self.save_run = True
             self.save_images = True
-            self.set_meta_data(name)
-            self.create_run_dir()
+            self.create_new_run()
         else:
             self.save_run = False
             self.save_images = False
-            self.set_meta_data(name)
 
         self.log("Starting run: {} v{}".format(self.name, self.version))
         # reset the environment
@@ -230,7 +248,7 @@ class MetaAgent(Agent):
                 observations = next_observations
                 previous_alloc_vector = alloc_vector
 
-                if test_run and self.train_step % self.log_image_interval == 0:
+                if (test_run or self.live_plot) and self.train_step % self.log_image_interval == 0:
                     figs = self.env.render()
                     plt.show()
 

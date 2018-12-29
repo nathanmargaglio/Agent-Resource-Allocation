@@ -8,8 +8,9 @@ from keras.optimizers import Adam
 from keras import backend as K
 
 class SubEnvironment:
-    def __init__(self, friction=None, lookback=10, max_steps=100, seed=None,
-            noise=None, amplitude=None, frequency=None, phase=None, freq_var=None):
+    def __init__(self, friction=None, lookback=8, max_steps=128, seed=None,
+            noise=None, amplitude=None, frequency=None, period=None, phase=None,
+            freq_var=None, amp_var=None):
         # cost of changing position
         self.fric_param = friction
 
@@ -28,11 +29,17 @@ class SubEnvironment:
         # max amplitude of value
         self.amp_param = amplitude
 
+        # variance in amplitude
+        self.amp_var_param = amp_var
+
         # frequency of value
         self.freq_param = frequency
 
         # variance in frequency
         self.freq_var_param = freq_var
+
+        # period of value
+        self.period_param = period
 
         # phase (t-offset) of value
         self.phase_param = phase
@@ -77,12 +84,26 @@ class SubEnvironment:
         self.fric = self.handle_param(self.fric_param, 0.1)
         self.noise = self.handle_param(self.noise_param, 0)
         self.amp = self.handle_param(self.amp_param, 1.)
+        self.amp_var = self.handle_param(self.amp_var_param, 0.)
         self.freq = self.handle_param(self.freq_param, 4)
-        self.phase = self.handle_param(self.phase_param, 0)*self.max_steps
+        self.phase = self.handle_param(self.phase_param, 0)
         self.freq_var = self.handle_param(self.freq_var_param, 0)
+        self.period = self.handle_param(self.period_param, self.max_steps)
 
-        self.a_space = (1-self.noise)*self.amp\
-                *np.sin(np.linspace(self.phase, 2*self.freq*np.pi + self.phase, self.max_steps))
+        self.freq = self.period/self.freq
+        self.a_space = np.array([])
+        first = True
+        while len(self.a_space) < self.max_steps:
+            amp_var = 2*self.amp_var*np.random.rand() + (1 - self.amp_var)
+            freq_var = 2*self.freq_var*np.random.rand() + (1 - self.freq_var)
+            wave = np.sin(np.linspace(0, 2*np.pi, freq_var * self.freq, endpoint=False))
+            wave *= amp_var
+            if first:
+                wave = wave[int(self.phase*len(wave)):]
+                first = False
+            self.a_space = np.concatenate([self.a_space, wave])
+
+        self.a_space = self.a_space[:self.max_steps]
         self.a_space += np.random.normal(0, self.amp*self.noise, size=self.a_space.shape)
 
         # The current position of the agent (0: neutral, 1: long)
