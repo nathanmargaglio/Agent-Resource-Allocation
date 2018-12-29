@@ -8,10 +8,10 @@ from keras.optimizers import Adam
 from keras import backend as K
 
 class SubEnvironment:
-    def __init__(self, friction=None, lookback=10, max_steps=100,
-            noise=None, amplitude=None, frequency=None, phase=None, seed=None):
+    def __init__(self, friction=None, lookback=10, max_steps=100, seed=None,
+            noise=None, amplitude=None, frequency=None, phase=None, freq_var=None):
         # cost of changing position
-        self.fric = self.handle_param(friction, 0.1)
+        self.fric_param = friction
 
         # how much of the value history the agent sees
         self.lookback = lookback
@@ -31,12 +31,15 @@ class SubEnvironment:
         # frequency of value
         self.freq_param = frequency
 
+        # variance in frequency
+        self.freq_var_param = freq_var
+
         # phase (t-offset) of value
         self.phase_param = phase
 
         # observation space (position + lookback)
         self.observation_space = gym.spaces.Box(low=-1., high=1.0,
-                shape=(self.lookback+1,), dtype=np.float32)
+                shape=(self.lookback + 1,), dtype=np.float32)
 
         # set a seed for testing
         self.seed = seed
@@ -71,12 +74,15 @@ class SubEnvironment:
         self.x_space = np.arange(self.max_steps)
 
         # Our "asset" space
+        self.fric = self.handle_param(self.fric_param, 0.1)
         self.noise = self.handle_param(self.noise_param, 0)
         self.amp = self.handle_param(self.amp_param, 1.)
         self.freq = self.handle_param(self.freq_param, 4)
         self.phase = self.handle_param(self.phase_param, 0)*self.max_steps
+        self.freq_var = self.handle_param(self.freq_var_param, 0)
 
-        self.a_space = (1-self.noise)*self.amp*np.sin(np.linspace(self.phase,self.freq*np.pi+self.phase,self.max_steps))
+        self.a_space = (1-self.noise)*self.amp\
+                *np.sin(np.linspace(self.phase, 2*self.freq*np.pi + self.phase, self.max_steps))
         self.a_space += np.random.normal(0, self.amp*self.noise, size=self.a_space.shape)
 
         # The current position of the agent (0: neutral, 1: long)
@@ -84,7 +90,7 @@ class SubEnvironment:
 
         # The current position (as a singleton) concatenated with
         # the current "viewable" observation
-        self.observation = np.concatenate([[self.position], self.a_space[self.t-self.lookback:self.t]])
+        self.observation = np.concatenate([[self.position], self.a_space[self.t-self.lookback+1:self.t+1]])
 
         return self.observation.reshape(self.observation_space.shape)
 
@@ -102,10 +108,10 @@ class SubEnvironment:
         self.t += 1
 
         # update observation
-        self.observation = np.concatenate([[self.position], self.a_space[self.t-self.lookback:self.t]])
+        self.observation = np.concatenate([[self.position], self.a_space[self.t-self.lookback+1:self.t+1]])
 
         # our current asset value
-        current = self.observation[-1]
+        current = self.a_space[self.t]
 
         # the reward for our position
         # e.g., if our position == 0 (neutral), then we gain no reward

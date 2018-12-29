@@ -20,7 +20,7 @@ class MetaAgent(Agent):
         self.save_images = save_images
         self.log_interval = log_interval
         if log_image_interval is None:
-            log_image_interval = self.log_interval
+            log_image_interval = 10
         self.log_image_interval = log_image_interval
         self.live_plot = live_plot
 
@@ -83,7 +83,7 @@ class MetaAgent(Agent):
             if debug:
                 minimum = K.print_tensor(minimum, 'minimum       :')
 
-            entropy_bonus = self.entropy_loss * (alloc * K.log(alloc + 1e-10))
+            entropy_bonus = self.entropy_loss * (y_pred * K.log(y_pred + 1e-10))
             if debug:
                 entropy_bonus = K.print_tensor(entropy_bonus, 'entropy_bonus :')
 
@@ -169,10 +169,10 @@ class MetaAgent(Agent):
                        callbacks=self.callbacks)
 
     def run(self, episodes=1, name=None, verbose=False, test_run=False, copy_subenv=False):
-        episode = 0
+        self.episode = 0
+        self.train_step = 0
         reward_history = []
         end_test=False
-        self.train_step = 0
 
         if not test_run:
             self.save_run = True
@@ -189,8 +189,8 @@ class MetaAgent(Agent):
         self.env.set_copy_subenv(copy_subenv)
         observations = self.env.reset()
 
-        # Collect a batch of samples
-        while episode < episodes:
+        # Beginning of Train Step
+        while self.episode < episodes:
             # 'Master Batch' that we add mini batches to
             batch = {
                 'observation': [],
@@ -210,6 +210,7 @@ class MetaAgent(Agent):
             previous_alloc_vector = self.env.allocation
             tmp_batch['previous_allocation_vector'].append(previous_alloc_vector)
 
+            # BEGINNING OF TRAIN STEP
             # While we don't hit the buffer size with our master batch...
             while len(batch['observation']) < self.buffer_size and not end_test:
                 # Get the action (scalar), action vector (one-hot vector),
@@ -229,7 +230,7 @@ class MetaAgent(Agent):
                 observations = next_observations
                 previous_alloc_vector = alloc_vector
 
-                if test_run:
+                if test_run and self.train_step % self.log_image_interval == 0:
                     figs = self.env.render()
                     plt.show()
 
@@ -257,19 +258,19 @@ class MetaAgent(Agent):
                         batch['previous_allocation_vector'].append(previous_alloc)
                         batch['reward'].append(r)
 
-                    if self.train_step % self.log_interval == 0:
+                    if self.episode % self.log_interval == 0:
                         for n, reward in enumerate(self.env.sub_episode_rewards):
-                            self.log_scalar('reward', reward, episode, 'sub_{}'.format(n))
+                            self.log_scalar('reward', reward, self.episode, 'sub_{}'.format(n))
 
-                        self.log_scalar('reward', self.env.running_reward, episode, 'meta')
-                        self.log_scalar('reward', self.env.uniform_running_reward, episode, 'uni')
-                        self.log_scalar('reward', self.env.random_running_reward, episode, 'rand')
+                        self.log_scalar('reward', self.env.running_reward, self.episode, 'meta')
+                        self.log_scalar('reward', self.env.uniform_running_reward, self.episode, 'uni')
+                        self.log_scalar('reward', self.env.random_running_reward, self.episode, 'rand')
 
-                    if self.train_step % self.log_image_interval == 0:
+                    if self.episode % self.log_image_interval == 0:
                         figs = self.env.render()
                         for n, f in enumerate(figs['sub']):
-                            self.log_plot('sub_plot_{}'.format(n), f, episode)
-                        self.log_plot('meta_plot', figs['meta'], episode)
+                            self.log_plot('sub_plot_{}'.format(n), f, self.episode)
+                        self.log_plot('meta_plot', figs['meta'], self.episode)
                         if test_run:
                             plt.show()
                         else:
@@ -287,11 +288,13 @@ class MetaAgent(Agent):
                     }
 
                     # increment the episode count
-                    episode += 1
-                    self.train_step += 1
+                    self.episode += 1
 
                     if test_run:
                         end_test = True
+
+                # END OF TRAIN STEP
+                self.train_step += 1
 
             if not test_run:
                 # we've filled up our master batch, so we unpack it into numpy arrays
