@@ -5,6 +5,7 @@ from io import BytesIO
 from keras.callbacks import TensorBoard, ModelCheckpoint, EarlyStopping, RemoteMonitor, CSVLogger
 import tensorflow as tf
 import matplotlib.pyplot as plt
+import imageio
 import numpy as np
 
 class Agent:
@@ -16,20 +17,30 @@ class Agent:
         self.console_handler.setFormatter(self.log_formatter)
         self.console_handler.setLevel(logging.INFO)
         self.root_logger.addHandler(self.console_handler)
+
+        self.name = None
+        self.version = 0
+        self.path = './runs/'
         self.save_run = True
         self.save_images = True
+        self.save_animations = True
 
-    def set_meta_data(self, name=None, version=0, path='./runs/'):
-        if path[-1] != '/':
-            path.append('/')
-        if name is None:
-            name = 'run'
-        self.name = name
-        self.path = path
-        self.version = version
+    def set_meta_data(self, name=None, version=None, path=None):
+        if path is not None:
+            if path[-1] != '/':
+                path.append('/')
+            self.path = path
+
+        if name is not None:
+            self.name = name
+
+        if version is not None:
+            self.version = version
+
         self.run_path = "{}{}-{}/".format(self.path, self.name, self.version)
         self.model_path = self.run_path + 'models/'
         self.tb_path = self.run_path + 'tb/'
+        self.animation_path = self.run_path + 'animations/'
         for agent in self.agents:
             agent.set_path(self.run_path)
 
@@ -57,17 +68,28 @@ class Agent:
         self.root_logger.info(value)
 
     def log_image(self, tag, image, step):
-        if not self.save_images:
-            return
-        s = BytesIO()
-        plt.imsave(s, image, format='png')
-        img_sum = tf.Summary.Image(
-                encoded_image_string=s.getvalue(),
-                height=image.shape[0],
-                width=image.shape[1]
-                )
-        summary = tf.Summary(value=[tf.Summary.Value(tag=tag, image=img_sum)])
-        self.image_writer.add_summary(summary, step)
+        if self.save_animations:
+            animation_name = self.animation_path + tag + '.gif'
+            try:
+                self.frame_writers[animation_name].append_data(image)
+            except Exception as e:
+                print(e)
+                self.frame_writers[animation_name] = imageio.get_writer(animation_name, fps=4, subrectangles= True)
+                self.frame_writers[animation_name].append_data(image)
+        if self.save_images:
+            s = BytesIO()
+            plt.imsave(s, image, format='png')
+            img_sum = tf.Summary.Image(
+                    encoded_image_string=s.getvalue(),
+                    height=image.shape[0],
+                    width=image.shape[1]
+                    )
+            summary = tf.Summary(value=[tf.Summary.Value(tag=tag, image=img_sum)])
+            self.image_writer.add_summary(summary, step)
+
+    def close_frame_writers(self):
+        for key in self.frame_writers:
+            self.frame_writers[key].close()
 
     def log_plot(self, tag, fig, step):
         fig.canvas.draw()
@@ -86,18 +108,33 @@ class Agent:
             os.makedirs(path)
             return []
 
-    def create_new_run(self):
+    def create_new_run(self, name='run', path='./runs/'):
+        self.name = name
+        self.path = path
+
         extra_version = 0
-        while self.run_path is None or os.path.exists(self.run_path):
-            self.version = len(self.get_previous_models(self.name, self.path)) + extra_version
-            self.run_path = "{}{}-{}/".format(self.path, self.name, self.version)
-            extra_version += 1
+        print('Creating log directory...')
+        while True:
+            try:
+                self.version = len(self.get_previous_models(self.name, self.path)) + extra_version
+                self.run_path = "{}{}-{}/".format(self.path, self.name, self.version)
+                os.makedirs(self.run_path)
+                break
+            except FileExistsError as e:
+                extra_version += 1
+                if extra_version % 100 == 0:
+                    print('\n',e)
+            if extra_version % 10 == 0:
+                print('.', end=' ')
+            if extra_version > 999:
+                raise StopIteration('Exceeded 999 runs of the name {}'.format(self.name))
 
-        os.makedirs(self.run_path)
-        self.tb_path = self.run_path + 'tb/'
+        self.set_meta_data()
 
-        self.model_path = self.run_path + 'models/'
         os.makedirs(self.model_path)
+        if self.save_animations:
+            os.makedirs(self.animation_path)
+            self.frame_writers = {}
 
         for i, agent in enumerate(self.agents):
             agent.set_path(self.run_path)
@@ -116,27 +153,14 @@ class Agent:
         self.file_handler.setFormatter(self.log_formatter)
         self.file_handler.setLevel(logging.INFO)
         self.root_logger.addHandler(self.file_handler)
-        self.root_logger.info('Run Logs Created')
+        self.root_logger.info('Run Logs Created: {}'.format(self.run_path))
 
     def get_callbacks(self):
         return self.callbacks
 
     def create_callbacks(self):
         callbacks = []
-
-        #keras.callbacks.TensorBoard(log_dir='./logs', histogram_freq=0, batch_size=32, write_graph=True, write_grads=False, write_images=False, embeddings_freq=0, embeddings_layer_names=None, embeddings_metadata=None, embeddings_data=None, update_freq='epoch')
-        #callbacks.append(TensorBoard(self.run_path))
-
-        #keras.callbacks.ModelCheckpoint(filepath, monitor='val_loss', verbose=0, save_best_only=False, save_weights_only=False, mode='auto', period=1)
-        #callbacks.append(ModelCheckpoint(model_path + 'checkpoint'))
-
-        #keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=0, verbose=0, mode='auto', baseline=None, restore_best_weights=False)
-        #callbacks.append(EarlyStopping(monitor='', patience=25))
-
-        #keras.callbacks.RemoteMonitor(root='http://localhost:9000', path='/publish/epoch/end/', field='data', headers=None, send_as_json=False)
-        #callbacks.append(RemoteMonitor())
-
-        #keras.callbacks.CSVLogger(filename, separator=',', append=False)
-        #callbacks.append(CSVLogger(self.run_path + 'log.csv'))
-
         return callbacks
+
+    def cleanup(self):
+        self.close_frame_writers()

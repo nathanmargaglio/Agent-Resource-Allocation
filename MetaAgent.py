@@ -13,14 +13,12 @@ class MetaAgent(Agent):
     def __init__(self, env, name=None, version=0, epsilon=0.05, gamma=0.99, entropy_loss=1e-3,
             actor_lr=1e-4, critic_lr=1e-4, hidden_size=128, epochs=8, batch_size=64,
             buffer_size=256, seed=None, live_plot=False,
-            save_run=True, save_images=True, log_interval=1, log_image_interval=None):
+            save_run=True, save_images=True, log_interval=1, log_image_interval=1):
 
         super().__init__()
         self.save_run = save_run
         self.save_images = save_images
         self.log_interval = log_interval
-        if log_image_interval is None:
-            log_image_interval = 128
         self.log_image_interval = log_image_interval
         self.live_plot = live_plot
 
@@ -248,7 +246,7 @@ class MetaAgent(Agent):
                 observations = next_observations
                 previous_alloc_vector = alloc_vector
 
-                if (test_run or self.live_plot)\
+                if (self.live_plot)\
                         and (self.train_step % self.log_image_interval == 0):
                     print('episode', self.episode)
                     figs = self.env.render()
@@ -328,4 +326,5 @@ class MetaAgent(Agent):
 
 
         self.reward_history = reward_history
+        self.cleanup()
         return self.reward_history

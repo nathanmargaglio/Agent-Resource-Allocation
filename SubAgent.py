@@ -44,7 +44,10 @@ class SubAgent(Agent):
         self.DUMMY_ACTION, self.DUMMY_VALUE = np.zeros((1,self.action_space.n)), np.zeros((1,1))
 
     def get_previous_models(self):
-        files = os.listdir(self.model_path)
+        try:
+            files = os.listdir(self.model_path)
+        except FileNotFoundError:
+            files = []
         return files
 
     def set_index(self, index):
@@ -57,7 +60,6 @@ class SubAgent(Agent):
             path = './runs/tmp/'
         self.run_path = path
         self.model_path = self.run_path + 'models/'
-        os.makedirs(self.model_path, exist_ok=True)
 
     def save_models(self):
         assert self.index is not None, "Can't save models: set index first."
