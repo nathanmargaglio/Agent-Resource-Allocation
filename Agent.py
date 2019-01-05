@@ -69,13 +69,14 @@ class Agent:
 
     def log_image(self, tag, image, step):
         if self.save_animations:
-            animation_name = self.animation_path + tag + '.gif'
-            try:
-                self.frame_writers[animation_name].append_data(image)
-            except Exception as e:
-                print(e)
-                self.frame_writers[animation_name] = imageio.get_writer(animation_name, fps=4, subrectangles= True)
-                self.frame_writers[animation_name].append_data(image)
+            frame_dir = self.animation_path + '/' + tag
+            if not os.path.isdir(frame_dir):
+                os.makedirs(frame_dir)
+                self.frame_count[frame_dir] = 0
+            count = self.frame_count[frame_dir]
+            plt.imsave(frame_dir + '/{0:03d}.png'.format(count), image)
+            self.frame_count[frame_dir] += 1
+
         if self.save_images:
             s = BytesIO()
             plt.imsave(s, image, format='png')
@@ -135,6 +136,7 @@ class Agent:
         if self.save_animations:
             os.makedirs(self.animation_path)
             self.frame_writers = {}
+            self.frame_count = {}
 
         for i, agent in enumerate(self.agents):
             agent.set_path(self.run_path)
