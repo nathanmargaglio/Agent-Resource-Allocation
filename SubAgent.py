@@ -9,20 +9,15 @@ from keras.models import Model, load_model
 from keras.optimizers import Adam
 from keras import backend as K
 
-class SubAgent(Agent):
-    def __init__(self, env, index=None, path=None, clear_session=False,
-                epsilon=0.2, gamma=0.99, entropy_loss=1e-3, actor_lr=0.001, critic_lr=0.005,
-                hidden_size=128, epochs=10, batch_size=64, buffer_size=256):
-        # Clear Tensorflow session and set some metadata
-        if clear_session:
-            K.clear_session()
+class PPOAgent(Agent):
+    def __init__(self, env, epsilon=0.2, gamma=0.99, entropy_loss=1e-3, actor_lr=0.001, critic_lr=0.005,
+                hidden_size=128, epochs=10, batch_size=64, buffer_size=256, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
         self.env = env
-        self.set_path(path)
-        self.set_index(index)
-
         self.action_space = env.action_space
         self.observation_space = env.observation_space
-
+        
         # Set hyperparameters
         self.epsilon = epsilon
         self.gamma = gamma
@@ -35,43 +30,13 @@ class SubAgent(Agent):
         self.buffer_size = buffer_size
 
         # Build Actor and Critic models
-        self.actor = self.build_actor()
-        self.critic = self.build_critic()
+        self.models['actor'] = self.build_actor_model()
+        self.models['critic'] = self.build_critic_model()
 
         # When we want predictions of actions, we need to pass in three things:
         # the observation, the old prob, and the advantage.
         # Here, we just created data to spoof the last two.
         self.DUMMY_ACTION, self.DUMMY_VALUE = np.zeros((1,self.action_space.n)), np.zeros((1,1))
-
-    def get_previous_models(self):
-        try:
-            files = os.listdir(self.model_path)
-        except FileNotFoundError:
-            files = []
-        return files
-
-    def set_index(self, index):
-        if index is None:
-            index = len(self.get_previous_models())
-        self.index = index
-
-    def set_path(self, path):
-        if path is None:
-            path = './runs/tmp/'
-        self.run_path = path
-        self.model_path = self.run_path + 'models/'
-
-    def save_models(self):
-        assert self.index is not None, "Can't save models: set index first."
-        assert self.model_path is not None, "Can't save models: set path first."
-        self.actor.save_weights(self.model_path + 'sub_{}_actor.h5'.format(self.index))
-        self.critic.save_weights(self.model_path + 'sub_{}_critic.h5'.format(self.index))
-
-    def load_models(self):
-        assert self.index is not None, "Can't load models: set index first."
-        assert self.model_path is not None, "Can't load models: set path first."
-        self.actor.load_weights("{}".format(self.model_path + 'sub_{}_actor.h5'.format(self.index)))
-        self.critic.load_weights(self.model_path + 'sub_{}_critic.h5'.format(self.index))
 
     def proximal_policy_optimization_loss(self, advantage, old_pred, debug=True):
 
@@ -136,7 +101,7 @@ class SubAgent(Agent):
             return result
         return loss
 
-    def build_actor(self):
+    def build_actor_model(self):
         # actor has three inputs: the current state, the advantage,
         # and the agent's predicted probability for the given observation
         state_inputs = Input(shape=self.observation_space.shape)
@@ -161,7 +126,7 @@ class SubAgent(Agent):
                       )])
         return model
 
-    def build_critic(self):
+    def build_critic_model(self):
         # critic recieves the observation as input
         state_inputs = Input(shape=self.observation_space.shape)
 
@@ -180,7 +145,7 @@ class SubAgent(Agent):
 
     def get_action(self, observation):
         # Predict the probability destribution of the actions as a vactor
-        prob = self.actor.predict([np.array([observation]),
+        prob = self.models['actor'].predict([np.array([observation]),
                                    self.DUMMY_VALUE,
                                    self.DUMMY_ACTION])
         prob = prob.flatten()
@@ -205,18 +170,18 @@ class SubAgent(Agent):
         old_probs = probs
 
         # Calculate advantages
-        values = self.critic.predict(obs).reshape((self.buffer_size, 1))
+        values = self.models['critic'].predict(obs).reshape((self.buffer_size, 1))
         advs = rews - values
 
         # Train the actor and critic on the batch data
-        self.actor.fit([obs, advs, old_probs], [acts],
+        self.models['actor'].fit([obs, advs, old_probs], [acts],
                        batch_size=self.batch_size, shuffle=True,
                        epochs=self.epochs, verbose=False)
-        self.critic.fit([obs], [advs],
+        self.models['critic'].fit([obs], [advs],
                        batch_size=self.batch_size, shuffle=True,
                         epochs=self.epochs, verbose=False)
 
-    def run(self, episodes, verbose=False):
+    def run(self, episodes):
         episode = 0
         self.reward_data = 0
         reward_history = []
@@ -283,16 +248,6 @@ class SubAgent(Agent):
                         batch['action_vector'].append(act)
                         batch['probability'].append(prob)
                         batch['reward'].append(r)
-
-                    # every 10th episode, log some stuff
-                    if (episode+1) % 10 == 0 and verbose:
-                        print('Episode:', episode)
-                        print('Reward :', self.reward_data)
-                        print('Average:', np.mean(reward_history[-100:]))
-                        print('-'*10)
-                        print()
-
-                        self.env.render()
 
                     # reset the environment
                     observation = self.env.reset()

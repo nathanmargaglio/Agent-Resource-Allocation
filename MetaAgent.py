@@ -2,28 +2,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 import gym
 
-
 from Agent import Agent
 from keras.layers import Input, Dense, concatenate
 from keras.models import Model
 from keras.optimizers import Adam
 from keras import backend as K
 
-class MetaAgent(Agent):
-    def __init__(self, env, name=None, version=0, epsilon=0.05, gamma=0.99, entropy_loss=1e-3,
-            actor_lr=1e-4, critic_lr=1e-4, hidden_size=128, epochs=8, batch_size=64,
-            buffer_size=256, seed=None, live_plot=False,
-            save_run=True, save_images=True, log_interval=1, log_image_interval=1):
-
-        super().__init__()
-        self.save_run = save_run
-        self.save_images = save_images
-        self.log_interval = log_interval
-        self.log_image_interval = log_image_interval
-        self.live_plot = live_plot
-
+class AllocationAgent(Agent):
+    def __init__(self, env, epsilon=0.05, gamma=0.99, entropy_loss=1e-3, actor_lr=1e-4, critic_lr=1e-4,
+                 hidden_size=128, epochs=8, batch_size=64, buffer_size=256, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
         self.env = env
-
+        
+        # These properties require a custom environment
         self.envs = env.envs
         self.env_count = env.env_count
 
@@ -45,30 +37,13 @@ class MetaAgent(Agent):
         self.buffer_size = buffer_size
 
         # Build Actor and Critic models
-        self.actor = self.build_actor()
-        self.critic = self.build_critic()
-
+        self.models['actor'] = self.build_actor_model()
+        self.models['critic'] = self.build_critic_model()
+        
         self.DUMMY_ALLOCATION = np.zeros(self.allocation_space.shape)
         self.DUMMY_VALUE = np.zeros((1, self.agent_count))
 
-        self.set_meta_data(name, version)
-
-    def save_models(self):
-        assert self.model_path is not None, "Can't save models: create run first."
-        for agent in self.agents:
-            agent.save_models()
-        self.actor.save_weights(self.model_path + 'meta_actor.h5')
-        self.critic.save_weights(self.model_path + 'meta_critic.h5')
-
-    def load_models(self):
-        assert self.model_path is not None, "Can't load models: create run first."
-        for agent in self.agents:
-            agent.load_models()
-        self.actor.load_weights(self.model_path + 'meta_actor.h5')
-        self.critic.load_weights(self.model_path + 'meta_critic.h5')
-
-
-    def proximal_policy_optimization_loss(self, advantage, previous_allocation, debug=True):
+    def allocation_proximal_policy_optimization_loss(self, advantage, previous_allocation, debug=True):
         def loss(y_true, y_pred):
             adv = advantage
             if debug:
@@ -109,7 +84,7 @@ class MetaAgent(Agent):
             return result
         return loss
 
-    def build_actor(self):
+    def build_actor_model(self):
         observation_inputs = []
         for i, sub_obs in enumerate(self.observation_spaces):
             sub_input = Input(shape=sub_obs.shape, name='sub_obs_{}'.format(i))
@@ -127,13 +102,13 @@ class MetaAgent(Agent):
                       outputs=[out_allocation])
 
         model.compile(optimizer=Adam(lr=self.actor_lr),
-                      loss=[self.proximal_policy_optimization_loss(
+                      loss=[self.allocation_proximal_policy_optimization_loss(
                           advantage=advantage,
                           previous_allocation=previous_allocation
                       )])
         return model
 
-    def build_critic(self):
+    def build_critic_model(self):
         # critic recieves the observation as input
         observation_inputs = []
         for i, sub_obs in enumerate(self.observation_spaces):
@@ -141,7 +116,7 @@ class MetaAgent(Agent):
             observation_inputs.append(sub_input)
         previous_allocation = Input(shape=self.allocation_space.shape, name='previous_allocation')
 
-	# hidden layers
+        # hidden layers
         x = concatenate(observation_inputs + [previous_allocation])
         x = Dense(self.hidden_size, activation='relu')(x)
         x = Dense(self.hidden_size, activation='relu')(x)
@@ -158,7 +133,7 @@ class MetaAgent(Agent):
     def get_allocation(self, observations, prev_alloc):
         p_al = np.array([prev_alloc])
         obs = [o.reshape((1,) + o.shape) for o in observations]
-        alloc = self.actor.predict(obs + [self.DUMMY_VALUE, p_al])
+        alloc = self.models['actor'].predict(obs + [self.DUMMY_VALUE, p_al])
         return alloc
 
     def train_batch(self, observations, allocations, rewards, previous_allocations):
@@ -171,38 +146,25 @@ class MetaAgent(Agent):
         obs = np.split(obs, obs.shape[1], axis=1)
         obs = [o.reshape(o.shape[0], o.shape[2]) for o in obs]
 
-        values = self.critic.predict(obs + [prev_allocs])
+        values = self.models['critic'].predict(obs + [prev_allocs])
         advs = rews - values
 
-        self.actor.fit(obs + [advs, prev_allocs], [allocs],
+        self.models['actor'].fit(obs + [advs, prev_allocs], [allocs],
                        batch_size=self.batch_size, shuffle=True,
-                       epochs=self.epochs, verbose=False,
-                       callbacks=self.callbacks)
-        self.critic.fit(obs + [prev_allocs], [advs],
+                       epochs=self.epochs, verbose=False)
+        self.models['critic'].fit(obs + [prev_allocs], [advs],
                        batch_size=self.batch_size, shuffle=True,
-                       epochs=self.epochs, verbose=False,
-                       callbacks=self.callbacks)
+                       epochs=self.epochs, verbose=False)
 
-    def run(self, episodes=1, verbose=False, test_run=False, copy_subenv=False, live_plot=None):
+    def run(self, episodes, update_version=True):
         self.episode = 0
         self.train_step = 0
-        reward_history = []
-        end_test=False
-
-        if live_plot is not None:
-            self.live_plot = live_plot
-
-        if not test_run:
-            self.save_run = True
-            self.save_images = True
-            self.create_new_run()
-        else:
-            self.save_run = False
-            self.save_images = False
+        
+        self.create_new_run(update_version)
 
         self.log("Starting run: {} v{}".format(self.name, self.version))
+        
         # reset the environment
-        self.env.set_copy_subenv(copy_subenv)
         observations = self.env.reset()
 
         # Beginning of Train Step
@@ -233,6 +195,7 @@ class MetaAgent(Agent):
                 # and probability distribution (vector) from the current observation
                 alloc_vector = self.get_allocation(observations, previous_alloc_vector)[0]
 
+                self.alloc_
                 # Get the next observation, reward, done, and info for taking an action
                 next_observations, rewards, done, info = self.env.step(alloc_vector)
 
@@ -246,17 +209,11 @@ class MetaAgent(Agent):
                 observations = next_observations
                 previous_alloc_vector = alloc_vector
 
-                if (self.live_plot)\
-                        and (self.train_step % self.log_image_interval == 0):
-                    print('episode', self.episode)
-                    figs = self.env.render()
-                    plt.show()
-
                 # if the episode is at a terminal state...
                 if done:
                     # log some reward data (for plotting)
                     reward_data = np.sum(tmp_batch['reward'])
-                    reward_history.append(reward_data)
+                    self.reward_history.append(reward_data)
 
                     # transform rewards based to discounted cumulative rewards
                     for j in range(len(tmp_batch['reward']) - 2, -1, -1):
@@ -276,23 +233,12 @@ class MetaAgent(Agent):
                         batch['previous_allocation_vector'].append(previous_alloc)
                         batch['reward'].append(r)
 
-                    if (self.episode % self.log_interval == 0) or self.episode >= episodes:
-                        for n, reward in enumerate(self.env.sub_episode_rewards):
-                            self.log_scalar('reward', reward, self.episode, 'sub_{}'.format(n))
+                    for n, reward in enumerate(self.env.sub_episode_rewards):
+                        self.log_scalar('reward', reward, self.episode, 'sub_{}'.format(n))
 
-                        self.log_scalar('reward', self.env.running_reward, self.episode, 'meta')
-                        self.log_scalar('reward', self.env.uniform_running_reward, self.episode, 'uni')
-                        self.log_scalar('reward', self.env.random_running_reward, self.episode, 'rand')
-
-                    if (self.episode % self.log_image_interval == 0) or self.episode >= episodes:
-                        figs = self.env.render()
-                        for n, f in enumerate(figs['sub']):
-                            self.log_plot('sub_plot_{}'.format(n), f, self.episode)
-                        self.log_plot('meta_plot', figs['meta'], self.episode)
-                        if test_run:
-                            plt.show()
-                        else:
-                            plt.close('all')
+                    self.log_scalar('reward', self.env.running_reward, self.episode, 'meta')
+                    self.log_scalar('reward', self.env.uniform_running_reward, self.episode, 'uni')
+                    self.log_scalar('reward', self.env.random_running_reward, self.episode, 'rand')
 
                     # reset the environment
                     observations = self.env.reset()
@@ -308,23 +254,16 @@ class MetaAgent(Agent):
                     # increment the episode count
                     self.episode += 1
 
-                    if test_run:
-                        end_test = True
-
                 # END OF TRAIN STEP
                 self.train_step += 1
 
-            if not test_run:
-                # we've filled up our master batch, so we unpack it into numpy arrays
-                _observations = np.array(batch['observation'])
-                _allocs = np.array(batch['allocation_vector'])
-                _prev_allocs = np.array(batch['previous_allocation_vector'])
-                _rewards = np.array(batch['reward'])
+            # we've filled up our master batch, so we unpack it into numpy arrays
+            _observations = np.array(batch['observation'])
+            _allocs = np.array(batch['allocation_vector'])
+            _prev_allocs = np.array(batch['previous_allocation_vector'])
+            _rewards = np.array(batch['reward'])
 
-                # train the agent on the batched data
-                self.train_batch(_observations, _allocs, _rewards, _prev_allocs)
-
+            # train the agent on the batched data
+            self.train_batch(_observations, _allocs, _rewards, _prev_allocs)
 
         self.reward_history = reward_history
-        self.cleanup()
-        return self.reward_history
