@@ -109,6 +109,18 @@ class Agent:
                 
         logger_path = '{}{}'.format(sub_path, tag)
         self.loggers[logger_path].info("{},{},{}".format(step, time.time.now(), value))
+        
+    def log_ndarray(self, tag, array, step, sub_path=None):
+         if sub_path is None:
+            sub_path = ''
+        else:
+            if sub_path[-1] != '/':
+                sub_path += '/'
+                
+        logger_path = '{}{}'.format(sub_path, tag)
+        shape = np.array(array.shape, dtype=float).tobytes()
+        value = array.astype(float).tobytes()
+        self.loggers[logger_path].info("{},{},{},{}".format(step, time.time.now(), shape, value))       
 
     def log(self, value):
         self.loggers['agent'].info(value)
