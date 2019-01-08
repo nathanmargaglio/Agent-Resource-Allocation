@@ -9,16 +9,24 @@ import numpy as np
 
 class Agent:
     def __init__(self, name='agent', version=0, path='./runs/', subagents=[],
-                set_subagent_data=True, save_run=True, save_images=False): 
+                set_subagent_data=True, save_run=True, save_images=False, verbose=0): 
         # Meta Data
         self.set_meta_data(name, version, path, subagents, set_subagent_data)
         self.models = {}
         self.loggers = {}
+        self.handlers = {}
         
-        self.setup_logger('agent')
+        self.log_formatter = logging.Formatter("%(asctime)s %(message)s")
+        self.verbose = verbose
         self.save_run = save_run
         self.save_images = save_images
-        
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close_log()
+
     def set_meta_data(self, name=None, version=None, path=None, subagents=None,
                      set_subagent_data=True):
         if path is not None:
@@ -55,7 +63,6 @@ class Agent:
         
         if update_version is True:
             extra_version = 0
-            self.log('Creating log directory: {}'.format(self.run_path))
             while True:
                 self.version = len(self.get_previous_run_versions()) + extra_version
                 proposed_run_path = "{}{}-{}/".format(self.path, self.name, self.version)
@@ -73,65 +80,106 @@ class Agent:
         os.makedirs(self.path, exist_ok=True)
         os.makedirs(self.run_path, exist_ok=True)
         os.makedirs(self.model_path, exist_ok=True)
+        os.makedirs(self.data_path, exist_ok=True)
 
         for i, agent in enumerate(self.subagents):
             agent.create_new_run(update_version)
-
-        self.log('Run Logs Created: {}'.format(self.run_path))
+            
+        self.setup_logger('agent', verbose=self.verbose > 0, use_formatter=True)
+        self.setup_logger('agent_debug', verbose=self.verbose > 1, use_formatter=True)
         
-    def setup_logger(self, tag, sub_path=None, log_to_console=False, level=logging.INFO):
+        self.log('Run Logs Created: {}'.format(self.run_path))
+        self.logd('Debug logs created.')
+        
+    def setup_logger(self, tag, sub_path=None, verbose=False, level=logging.INFO, close_previous_version=True, use_formatter=False):
+        
+        if close_previous_version and type(sub_path) is int:
+            previous_sub_path = str(sub_path - 1)
+            if previous_sub_path[-1] != '/':
+                previous_sub_path += '/'
+            previous_sub_path = '{}{}'.format(previous_sub_path, tag)
+
+            self.close_log(previous_sub_path)
+                
         if sub_path is None:
             sub_path = ''
         else:
-            if sub_path[-1] != '/':
+            sub_path = str(sub_path)
+            if len(sub_path) < 1 or sub_path[-1] != '/':
                 sub_path += '/'
                 
         logger_path = '{}{}'.format(sub_path, tag)
         logger_name = '{}-{}_{}'.format(self.name, self.version, logger_path)
-        handler = logging.FileHandler(self.data_path + "{}.csv".format(logger_path))
+        os.makedirs(self.data_path + sub_path, exist_ok=True)
+        handler = logging.FileHandler(self.data_path + "{}.txt".format(logger_path))
         logger = logging.getLogger(logger_name)
+        if use_formatter:
+            handler.setFormatter(self.log_formatter)
         logger.setLevel(level)
         logger.addHandler(handler)
         
-        if log_to_console:
+        if verbose:
             console_handler = logging.StreamHandler()
+            if use_formatter:
+                console_handler.setFormatter(self.log_formatter)   
             logger.addHandler(console_handler)
-        
+            
+        self.handlers[logger_path] = handler
         self.loggers[logger_path] = logger
-        return logger
+        
+        return self.loggers[logger_path]
     
-    def log_scalar(self, tag, value, step, sub_path=None):
+    def fetch_or_create_logger(self, tag, sub_path=None):
+        passed_sub_path = sub_path
         if sub_path is None:
             sub_path = ''
         else:
+            sub_path = str(sub_path)
             if sub_path[-1] != '/':
                 sub_path += '/'
                 
         logger_path = '{}{}'.format(sub_path, tag)
-        self.loggers[logger_path].info("{},{},{}".format(step, time.time.now(), value))
+   
+        if logger_path in self.loggers.keys():
+            return self.loggers[logger_path]
+        else:
+            return self.setup_logger(tag, passed_sub_path)
+
+    def close_log(self, logger_path=None):
+        if logger_path is None:
+            logger_paths = list(self.loggers.keys())[:]
+            for lg in logger_paths:
+                self.loggers.pop(lg)
+                self.handlers.pop(lg).close()
+        else:
+            if logger_path in self.loggers.keys():
+                self.loggers.pop(logger_path)
+                self.handlers.pop(logger_path).close()
+            
+    def log_scalar(self, tag, value, step, sub_path=None):
+        logger = self.fetch_or_create_logger(tag, sub_path)
+        logger.info("{},{},{}".format(step, time.time(), value))
         
     def log_ndarray(self, tag, array, step, sub_path=None):
-         if sub_path is None:
-            sub_path = ''
-        else:
-            if sub_path[-1] != '/':
-                sub_path += '/'
-                
-        logger_path = '{}{}'.format(sub_path, tag)
+        logger = self.fetch_or_create_logger(tag, sub_path)
         shape = np.array(array.shape, dtype=float).tobytes()
         value = array.astype(float).tobytes()
-        self.loggers[logger_path].info("{},{},{},{}".format(step, time.time.now(), shape, value))       
+        logger.info("{},{},{},{}".format(step, time.time(), shape, value))       
 
     def log(self, value):
         self.loggers['agent'].info(value)
 
+    def logd(self, tag, value='', level=0):
+        lev_val = '-'*level + '>'
+        self.loggers['agent_debug'].info("{} {}\t{}".format(lev_val, tag, value))
+        
     def get_previous_run_versions(self):
         try:
             files = os.listdir(self.path)
             files = [f for f in files if self.name + '-' in f]
             return files
         except FileNotFoundError as e:
-            self.log("Root path {} doesn't exist.  Creating it...".format(self.path))
+            print("Root path {} doesn't exist.  Creating it...".format(self.path))
             os.makedirs(self.path)
             return []
     
