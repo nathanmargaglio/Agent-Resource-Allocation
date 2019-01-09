@@ -1,4 +1,5 @@
 import os
+import shutil
 import time
 import logging
 from io import BytesIO
@@ -6,29 +7,71 @@ import tensorflow as tf
 import matplotlib.pyplot as plt
 import imageio
 import numpy as np
+import multiprocessing as mp
+import threading
+from copy import deepcopy
+tf.logging.set_verbosity(tf.logging.ERROR)
 
+def update_agent(f):
+    @wraps(f)
+    def wrapper(self, *args, **kw):
+        if 'agent' in self.mp_agent:
+            self.set_self(self.mp_agent['agent'])
+        return f(self, *args, **kw)
+    return wrapper
+    
 class Agent:
-    def __init__(self, name='agent', version=0, path='./runs/', subagents=[],
-                set_subagent_data=True, save_run=True, save_images=False, verbose=0): 
+    def __init__(self, name='agent', version=0, path='./runs/', subagents=[], tmp_run=False,
+                set_subagent_data=True, save_run=True, versioning=True, verbose=0, *args, **kargs): 
         # Meta Data
+        self.kargs = kargs
+        self.tmp_run = tmp_run
+        self.tmp_path = "{}tmp-0/".format(path)
         self.set_meta_data(name, version, path, subagents, set_subagent_data)
         self.models = {}
         self.loggers = {}
         self.handlers = {}
+        self.jobs = {}
+        self.sessions = {}
+        
+        manager = mp.Manager()
+        self.mp_agent = manager.dict()
         
         self.log_formatter = logging.Formatter("%(asctime)s %(message)s")
         self.verbose = verbose
         self.save_run = save_run
-        self.save_images = save_images
-    
+        self.versioning = versioning
+        self.subagent_versioning = self.versioning
+        
+        self.tf_config = tf.ConfigProto()
+        self.tf_config.gpu_options.allow_growth=True
+        
     def __enter__(self):
         return self
     
     def __exit__(self, exc_type, exc_value, traceback):
+        print('Cleaning Up:', self)
+        self.clean_up()
+        
+    def clean_up(self):
+        self.close_session()
+        self.close_job()
         self.close_log()
-
-    def set_meta_data(self, name=None, version=None, path=None, subagents=None,
-                     set_subagent_data=True):
+        del self.models
+        self.models = {}
+        
+    def start_updates(self):
+        self.continue_updates = True
+        self.updater = threading.Thread(target=self.update_self)
+        self.updater.start()
+        
+    def update_self(self):
+        while self.continue_updates:
+            if 'agent' in self.mp_agent:
+                self.set_self(self.mp_agent['agent'])
+                del self.mp_agent['agent']
+    
+    def set_meta_data(self, name=None, version=None, path=None, subagents=None, set_subagent_data=True):
         if path is not None:
             if path[-1] != '/':
                 path.append('/')
@@ -43,6 +86,10 @@ class Agent:
         if subagents is not None:
             self.subagents = subagents
             
+        if self.tmp_run:
+            self.name = 'tmp'
+            self.version = 0
+            
         self.run_path = "{}{}-{}/".format(self.path, self.name, self.version)
         
         if set_subagent_data:
@@ -56,12 +103,11 @@ class Agent:
         self.model_path = self.run_path + 'models/'
         self.data_path = self.run_path + 'data/'
 
-    def create_new_run(self, update_version=True):
+    def create_new_run(self):
         # Creates a new run
         # i.e., gives the agent a unique name (through versioning)
         # and creates a new directory for the training run
-        
-        if update_version is True:
+        if self.versioning is True and not self.tmp_run:
             extra_version = 0
             while True:
                 self.version = len(self.get_previous_run_versions()) + extra_version
@@ -76,21 +122,82 @@ class Agent:
         # Reset the agent's meta data
         self.set_meta_data()
 
+        if self.tmp_run:
+            try:
+                shutil.rmtree(self.tmp_path)
+            except OSError as e:
+                print("Error: {} - {}.".format(e.filename, e.strerror))
+                
         # Make sure our paths exist
         os.makedirs(self.path, exist_ok=True)
         os.makedirs(self.run_path, exist_ok=True)
         os.makedirs(self.model_path, exist_ok=True)
         os.makedirs(self.data_path, exist_ok=True)
+       
+    def training_loop(self):
+        pass
+       
+    def pretraining_step(self):
+        pass
+    
+    def build_models(self):
+        pass
+    
+    def set_self(self, other):
+        args = other.__dict__
+        for key in args:
+            setattr(self, key, args[key])
 
+    def _training_job(self):
+        self.episode = 0
+        self.train_step = 0
+        self.episode_step = 0
+        self.episode_rewards = []
+  
         for i, agent in enumerate(self.subagents):
-            agent.create_new_run(update_version)
+            agent.create_new_run(self.subagent_versioning)
             
-        self.setup_logger('agent', verbose=self.verbose > 0, use_formatter=True)
-        self.setup_logger('agent_debug', verbose=self.verbose > 1, use_formatter=True)
+        with tf.Session(config=self.tf_config) as sess:
+            self.create_new_run()
+
+            self.setup_logger('agent', verbose=self.verbose > 0, use_formatter=True)
+            self.log('Run Created: {}'.format(self.run_path))
+            self.log('Agen logs created.')
+
+            self.setup_logger('agent_debug', verbose=self.verbose > 1, use_formatter=True)
+            self.logd('Debug logs created.')
+
+            self.log('Running Pretraining Step.')
+            self.pretraining_step()
+            self.log('Building Models.')
+            self.build_models()
+            self.log('Beginning Training Loop.')
+            self.training_loop()
+
+        self.log('Training Complete!')
+            
+    
+    def agent_process(self, agent):
+        runner = deepcopy(agent)
+        runner._training_job()
+        runner.clean_up()
+        self.mp_agent['agent'] = runner
+        agent.clean_up()
         
-        self.log('Run Logs Created: {}'.format(self.run_path))
-        self.logd('Debug logs created.')
-        
+    def run(self, episodes, multiprocess=True):
+        self.max_episodes = episodes
+        if multiprocess:
+            job = mp.Process(
+                name = "{}-{}".format(self.name, self.version),
+                target=self.agent_process,
+                args=(self, )
+            )
+            job.start()
+            self.jobs[job.name] = job
+        else:
+            self._training_job()
+        self.start_updates()
+      
     def setup_logger(self, tag, sub_path=None, verbose=False, level=logging.INFO, close_previous_version=True, use_formatter=False):
         
         if close_previous_version and type(sub_path) is int:
@@ -144,18 +251,40 @@ class Agent:
             return self.loggers[logger_path]
         else:
             return self.setup_logger(tag, passed_sub_path)
-
-    def close_log(self, logger_path=None):
-        if logger_path is None:
-            logger_paths = list(self.loggers.keys())[:]
-            for lg in logger_paths:
-                self.loggers.pop(lg)
-                self.handlers.pop(lg).close()
+        
+    def close_log(self, name=None):
+        if name is None:
+            names = list(self.loggers.keys())[:]
+            for n in names:
+                self.loggers.pop(n)
+                self.handlers.pop(n).close()
         else:
-            if logger_path in self.loggers.keys():
-                self.loggers.pop(logger_path)
-                self.handlers.pop(logger_path).close()
-            
+            if name in self.loggers.keys():
+                self.loggers.pop(name)
+                self.handlers.pop(name).close()
+ 
+    def close_job(self, name=None):
+        if name is None:
+            names = list(self.jobs.keys())[:]
+            for n in names:
+                job = self.jobs.pop(n)
+                job.terminate()
+                job.join()
+        else:
+            if name in self.jobs.keys():
+                job = self.jobs.pop(name)
+                job.terminate()
+                job.join()
+ 
+    def close_session(self, name=None):
+        if name is None:
+            names = list(self.sessions.keys())[:]
+            for n in names:
+                self.sessions.pop(n).close()
+        else:
+            if name in self.sessions.keys():
+                self.sessions.pop(name).close()
+    
     def log_scalar(self, tag, value, step, sub_path=None):
         logger = self.fetch_or_create_logger(tag, sub_path)
         logger.info("{},{},{}".format(step, time.time(), value))
@@ -180,7 +309,7 @@ class Agent:
             return files
         except FileNotFoundError as e:
             print("Root path {} doesn't exist.  Creating it...".format(self.path))
-            os.makedirs(self.path)
+            os.makedirs(self.path, exist_ok=True)
             return []
     
     def save_models(self):
