@@ -2,23 +2,9 @@ import os
 import shutil
 import time
 import logging
-from io import BytesIO
 import tensorflow as tf
-import matplotlib.pyplot as plt
-import imageio
 import numpy as np
-import multiprocessing as mp
-import threading
-from copy import deepcopy
 tf.logging.set_verbosity(tf.logging.ERROR)
-
-def update_agent(f):
-    @wraps(f)
-    def wrapper(self, *args, **kw):
-        if 'agent' in self.mp_agent:
-            self.set_self(self.mp_agent['agent'])
-        return f(self, *args, **kw)
-    return wrapper
     
 class Agent:
     def __init__(self, name='agent', version=0, path='./runs/', subagents=[], tmp_run=False,
@@ -33,9 +19,6 @@ class Agent:
         self.handlers = {}
         self.jobs = {}
         self.sessions = {}
-        
-        manager = mp.Manager()
-        self.mp_agent = manager.dict()
         
         self.log_formatter = logging.Formatter("%(asctime)s %(message)s")
         self.verbose = verbose
@@ -59,17 +42,6 @@ class Agent:
         self.close_log()
         del self.models
         self.models = {}
-        
-    def start_updates(self):
-        self.continue_updates = True
-        self.updater = threading.Thread(target=self.update_self)
-        self.updater.start()
-        
-    def update_self(self):
-        while self.continue_updates:
-            if 'agent' in self.mp_agent:
-                self.set_self(self.mp_agent['agent'])
-                del self.mp_agent['agent']
     
     def set_meta_data(self, name=None, version=None, path=None, subagents=None, set_subagent_data=True):
         if path is not None:
@@ -142,11 +114,6 @@ class Agent:
     
     def build_models(self):
         pass
-    
-    def set_self(self, other):
-        args = other.__dict__
-        for key in args:
-            setattr(self, key, args[key])
 
     def _training_job(self):
         self.episode = 0
@@ -157,7 +124,8 @@ class Agent:
         for i, agent in enumerate(self.subagents):
             agent.create_new_run(self.subagent_versioning)
             
-        with tf.Session(config=self.tf_config) as sess:
+        sess = tf.Session(config=self.tf_config)
+        try:
             self.create_new_run()
 
             self.setup_logger('agent', verbose=self.verbose > 0, use_formatter=True)
@@ -173,32 +141,20 @@ class Agent:
             self.build_models()
             self.log('Beginning Training Loop.')
             self.training_loop()
-
-        self.log('Training Complete!')
-            
-    
-    def agent_process(self, agent):
-        runner = deepcopy(agent)
-        runner._training_job()
-        runner.clean_up()
-        self.mp_agent['agent'] = runner
-        agent.clean_up()
+            sess.close()
+            self.log('Training Complete!')
+        except Exception as e:
+            sess.close()
+            self.log('Error!')
+            self.log("{}".format(e))
+            raise e
         
     def run(self, episodes, multiprocess=True):
         self.max_episodes = episodes
-        if multiprocess:
-            job = mp.Process(
-                name = "{}-{}".format(self.name, self.version),
-                target=self.agent_process,
-                args=(self, )
-            )
-            job.start()
-            self.jobs[job.name] = job
-        else:
-            self._training_job()
-        self.start_updates()
+        self._training_job()
       
-    def setup_logger(self, tag, sub_path=None, verbose=False, level=logging.INFO, close_previous_version=True, use_formatter=False):
+    def setup_logger(self, tag, sub_path=None, verbose=False, level=logging.INFO,
+                     close_previous_version=True, use_formatter=False):
         
         if close_previous_version and type(sub_path) is int:
             previous_sub_path = str(sub_path - 1)
@@ -275,15 +231,6 @@ class Agent:
                 job = self.jobs.pop(name)
                 job.terminate()
                 job.join()
- 
-    def close_session(self, name=None):
-        if name is None:
-            names = list(self.sessions.keys())[:]
-            for n in names:
-                self.sessions.pop(n).close()
-        else:
-            if name in self.sessions.keys():
-                self.sessions.pop(name).close()
     
     def log_scalar(self, tag, value, step, sub_path=None):
         logger = self.fetch_or_create_logger(tag, sub_path)
