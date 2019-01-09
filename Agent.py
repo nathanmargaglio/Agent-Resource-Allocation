@@ -290,6 +290,7 @@ class Agent:
         logger.info("{},{},{}".format(step, time.time(), value))
         
     def log_ndarray(self, tag, array, step, sub_path=None):
+        array = np.array(array)
         logger = self.fetch_or_create_logger(tag, sub_path)
         shape = np.array(array.shape, dtype=float).tobytes()
         value = array.astype(float).tobytes()
