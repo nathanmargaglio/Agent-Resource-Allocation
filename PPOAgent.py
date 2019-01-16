@@ -19,9 +19,10 @@ class PPOAgent(Agent):
         self.action_space = env.action_space
         self.observation_space = env.observation_space
         
-        self.vec_env = False
-        if (type(self.env) == ParallelEnvironment):
-            self.vec_env = True
+        if type(self.env) == list:
+            self.env = ParallelEnvironment(self.env)
+        elif type(self.env) != ParallelEnvironment:
+            self.env = ParallelEnvironment([self.env])
             
         # Set hyperparameters
         self.epsilon = epsilon
@@ -198,9 +199,19 @@ class PPOAgent(Agent):
         
     def training_loop(self):
         # reset the environment
-        observation = self.env.reset()
-        if self.vec_env:
-            observation = np.squeeze(observation)
+        observations = self.env.reset()
+        
+        # Mini batch which contains a single episode's data
+        tmp_batches = []
+        for env_num in range(self.env.num_envs):
+            tmp_batches.append({
+                'observation': [],
+                'action_vector': [],
+                'probability': [],
+                'reward': [],
+                'ep_step': 0,
+                'ep_rew': []
+            })       
         
         # Collect a batch of samples
         while self.episode < self.max_episodes:
@@ -212,61 +223,52 @@ class PPOAgent(Agent):
                 'reward': []
             }
 
-            # Mini batch which contains a single episode's data
-            tmp_batch = {
-                'observation': [],
-                'action_vector': [],
-                'probability': [],
-                'reward': []
-            }
-
             # While we don't hit the buffer size with our master batch...
             while len(batch['observation']) < self.buffer_size:
-                self.log_ndarray('observation', observation, self.episode_step, self.episode)
+                actions = []
+                for env_num, observation in enumerate(observations):
+                    tmp_batch = tmp_batches[env_num]
+                    log_sub_path = 'env_{}/{}'.format(env_num, self.episode)
+                    self.log_ndarray('observation', observation, tmp_batch['ep_step'], log_sub_path)
                 
-                # Get the action (scalar), action vector (one-hot vector),
-                # and probability distribution (vector) from the current observation
+                    # Get the action (scalar), action vector (one-hot vector),
+                    # and probability distribution (vector) from the current observation
 
-                action, action_vector, prob = self.get_action(observation)
-
-                self.log_ndarray('action_vector', action_vector, self.episode_step, self.episode)
-                self.log_ndarray('prob', prob, self.episode_step, self.episode)
-                
-                # Get the next observation, reward, done, and info for taking an action
-                if self.vec_env:
-                    _action = np.expand_dims(action, axis=1)
-                else:
-                    _action = action
+                    action, action_vector, prob = self.get_action(observation)
+                    actions.append(action)
                     
-                next_observation, reward, done, info = self.env.step(_action)
-                
-                if self.vec_env:
-                    next_observation = np.squeeze(next_observation)
-                    reward = np.squeeze(reward)
-                    done = np.squeeze(done)
-                    info = np.squeeze(info)
-                    
-                self.log_ndarray('next_observation', next_observation, self.episode_step, self.episode)
-                self.log_ndarray('reward', reward, self.episode_step, self.episode)
-                
-                reward_sum = np.sum(reward)
-                self.episode_rewards.append(reward_sum)
-                self.log_scalar('reward_sum', reward_sum, self.episode_step, self.episode)
+                    self.log_ndarray('action_vector', action_vector, tmp_batch['ep_step'], log_sub_path)
+                    self.log_ndarray('prob', prob, tmp_batch['ep_step'], log_sub_path)
 
-                # Append the data to the mini batch
-                tmp_batch['observation'].append(observation)
-                tmp_batch['action_vector'].append(action_vector)
-                tmp_batch['probability'].append(prob)
-                tmp_batch['reward'].append(reward)
+                    # Append the data to the mini batch
+                    tmp_batch['observation'].append(observation)
+                    tmp_batch['action_vector'].append(action_vector)
+                    tmp_batch['probability'].append(prob)
+
+                next_observations, rewards, dones, infos = self.env.step(actions)
+                for env_num, (next_observation, reward, done, info) in enumerate(zip(next_observations, rewards, dones, infos)):
+                    tmp_batch = tmp_batches[env_num]
+                    log_sub_path = 'env_{}/{}'.format(env_num, self.episode)
+                    self.log_ndarray('next_observation', next_observation, tmp_batch['ep_step'], log_sub_path)
+                    self.log_ndarray('reward', reward, tmp_batch['ep_step'], log_sub_path)
+
+                    reward_sum = np.sum(reward)
+                    tmp_batch['reward'].append(reward)
+                    tmp_batch['ep_rew'].append(reward_sum)
+                    self.log_scalar('reward_sum', reward_sum, tmp_batch['ep_step'], log_sub_path)
 
                 # The current observation is now the 'next' observation
-                observation = next_observation
+                observations = next_observations
 
                 # if the episode is at a terminal state...
-                if done:
-                    episode_reward = np.sum(self.episode_rewards)
-                    self.log('Episode {} done! Reward: {}'.format(self.episode, episode_reward))
-                    self.log_scalar('episode_reward', episode_reward, self.episode_step)
+                for env_num, done in enumerate(dones):
+                    if not done:
+                        continue
+                    tmp_batch = tmp_batches[env_num]
+                    log_sub_path = 'env_{}/{}'.format(env_num, self.episode)
+                    episode_reward = np.sum(tmp_batch['ep_rew'])
+                    self.log('Episode {} done! Reward: {} ({} steps)'.format(self.episode, episode_reward, tmp_batch['ep_step']))
+                    self.log_scalar('episode_reward', episode_reward, tmp_batch['ep_step'])
 
                     # transform rewards based to discounted cumulative rewards
                     for j in range(len(tmp_batch['reward']) - 2, -1, -1):
@@ -287,32 +289,31 @@ class PPOAgent(Agent):
                         batch['reward'].append([r])
 
                     # reset the environment
-                    observation = self.env.reset()
-                    if self.vec_env:
-                        observation = np.squeeze(observation)
-
-                    # reset the mini batch
-                    tmp_batch = {
+                    # observations = self.env.reset()
+                    
+                    tmp_batches[env_num] = {
                         'observation': [],
                         'action_vector': [],
                         'probability': [],
-                        'reward': []
+                        'reward': [],
+                        'ep_step': -1,
+                        'ep_rew': []
                     }
 
                     # increment the episode count
                     self.episode += 1
                     self.episode_step = -1
-                    self.episode_rewards = []
 
                 # END OF TRAIN STEP
-                self.episode_step += 1
+                for tmp_batch in tmp_batches:
+                    tmp_batch['ep_step'] += 1
                 self.train_step += 1
 
             # we've filled up our master batch, so we unpack it into numpy arrays
-            observations = np.array(batch['observation'])
-            actions = np.array(batch['action_vector'])
-            probabilities = np.array(batch['probability'])
-            rewards = np.array(batch['reward'])
+            _observations = np.array(batch['observation'])
+            _actions = np.array(batch['action_vector'])
+            _probabilities = np.array(batch['probability'])
+            _rewards = np.array(batch['reward'])
 
             # train the agent on the batched data
-            self.train_batch(observations, actions, probabilities, rewards)
+            self.train_batch(_observations, _actions, _probabilities, _rewards)

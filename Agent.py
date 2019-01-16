@@ -37,7 +37,6 @@ class Agent:
         self.clean_up()
         
     def clean_up(self):
-        self.close_session()
         self.close_job()
         self.close_log()
         del self.models
@@ -125,12 +124,13 @@ class Agent:
             agent.create_new_run(self.subagent_versioning)
             
         sess = tf.Session(config=self.tf_config)
+        self.start_time = time.time()
         try:
             self.create_new_run()
 
             self.setup_logger('agent', verbose=self.verbose > 0, use_formatter=True)
             self.log('Run Created: {}'.format(self.run_path))
-            self.log('Agen logs created.')
+            self.log('Agent logs created.')
 
             self.setup_logger('agent_debug', verbose=self.verbose > 1, use_formatter=True)
             self.logd('Debug logs created.')
@@ -142,12 +142,14 @@ class Agent:
             self.log('Beginning Training Loop.')
             self.training_loop()
             sess.close()
-            self.log('Training Complete!')
+            self.end_time = time.time()
+            self.log('Training Complete! {:.3f} sec'.format(self.end_time - self.start_time))
         except Exception as e:
             sess.close()
             self.log('Error!')
             self.log("{}".format(e))
             raise e
+        self.clean_up()
         
     def run(self, episodes, multiprocess=True):
         self.max_episodes = episodes
@@ -218,6 +220,18 @@ class Agent:
             if name in self.loggers.keys():
                 self.loggers.pop(name)
                 self.handlers.pop(name).close()
+                
+    def close_log_by_tag(self, tag, sub_path=None):
+        passed_sub_path = sub_path
+        if sub_path is None:
+            sub_path = ''
+        else:
+            sub_path = str(sub_path)
+            if sub_path[-1] != '/':
+                sub_path += '/'
+                
+        logger_path = '{}{}'.format(sub_path, tag)
+        self.close_log(logger_path)
  
     def close_job(self, name=None):
         if name is None:
